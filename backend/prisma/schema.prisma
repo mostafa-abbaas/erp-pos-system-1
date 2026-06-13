@@ -1,75 +1,48 @@
+// ============================================================
+// schema.prisma  — ERP/POS Home Appliances Spare Parts
+// Generator  : Prisma Client JS
+// Database   : PostgreSQL 16
+// Encoding   : UTF-8  |  Timezone: UTC
+//
+// NOTE: This schema is the authoritative reference document.
+// The running application uses direct pg (node-postgres) queries
+// because Prisma engine binaries are unavailable in this env.
+// This file is kept for documentation, migrations, and future
+// migration back to Prisma when binaries become available.
+// Run SQL migrations via: psql ... -f scripts/init.sql
+// ============================================================
+
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "views"]
+  binaryTargets   = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [uuidOssp(map: "uuid-ossp"), pgTrgm(map: "pg_trgm")]
 }
+
+// ============================================================
+// ENUMS
+// ============================================================
 
 enum UserRole {
   ADMIN
   CASHIER
   WAREHOUSE
   BRANCH_MANAGER
+
+  @@map("user_role")
 }
 
 enum UserStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
-}
 
-enum PaymentMethod {
-  CASH
-  CARD
-  BANK_TRANSFER
-  CREDIT
-  MIXED
-}
-
-enum SaleStatus {
-  DRAFT
-  COMPLETED
-  REFUNDED
-  PARTIALLY_REFUNDED
-  CANCELLED
-}
-
-enum TransferStatus {
-  PENDING
-  APPROVED
-  IN_TRANSIT
-  COMPLETED
-  REJECTED
-  CANCELLED
-}
-
-enum MovementType {
-  PURCHASE
-  SALE
-  TRANSFER_IN
-  TRANSFER_OUT
-  ADJUSTMENT
-  DAMAGE
-  RETURN
-  INITIAL
-}
-
-enum NotificationType {
-  LOW_STOCK
-  TRANSFER_REQUEST
-  TRANSFER_COMPLETED
-  SYNC_ERROR
-  DAILY_REPORT
-  SYSTEM
-}
-
-enum SyncStatus {
-  PENDING
-  SUCCESS
-  FAILED
-  RETRYING
+  @@map("user_status")
 }
 
 enum LogAction {
@@ -81,111 +54,199 @@ enum LogAction {
   EXPORT
   IMPORT
   PRINT
+
+  @@map("log_action")
 }
 
+enum MovementType {
+  PURCHASE
+  SALE
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT
+  DAMAGE
+  RETURN
+  INITIAL
+
+  @@map("movement_type")
+}
+
+enum SaleStatus {
+  DRAFT
+  COMPLETED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  CANCELLED
+
+  @@map("sale_status")
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  CREDIT
+  MIXED
+
+  @@map("payment_method")
+}
+
+enum TransferStatus {
+  PENDING
+  APPROVED
+  IN_TRANSIT
+  COMPLETED
+  REJECTED
+  CANCELLED
+
+  @@map("transfer_status")
+}
+
+enum NotificationType {
+  LOW_STOCK
+  TRANSFER_REQUEST
+  TRANSFER_COMPLETED
+  SYNC_ERROR
+  DAILY_REPORT
+  SYSTEM
+
+  @@map("notification_type")
+}
+
+enum SyncStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+
+  @@map("sync_status")
+}
+
+// ============================================================
+// USERS & AUTH
+// ============================================================
+
+/// Branches / store locations & warehouse
 model Branch {
-  id          String   @id @default(uuid())
+  id          String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   code        String   @unique @db.VarChar(20)
   name        String   @db.VarChar(100)
   nameAr      String?  @map("name_ar") @db.VarChar(100)
-  address     String?
+  address     String?  @db.Text
   phone       String?  @db.VarChar(20)
   isWarehouse Boolean  @default(false) @map("is_warehouse")
   isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
-  users         User[]
-  inventory     Inventory[]
-  salesFrom     Sale[]
-  purchasesFrom Purchase[]
-  transfersFrom Transfer[] @relation("FromBranch")
-  transfersTo   Transfer[] @relation("ToBranch")
-  notifications Notification[]
-  shifts        Shift[]
-  locations     WarehouseLocation[]
+  // Relations
+  users               User[]
+  inventory           Inventory[]
+  inventoryMovements  InventoryMovement[]
+  salesFrom           Sale[]
+  purchasesAt         Purchase[]
+  transfersFrom       Transfer[]            @relation("TransferFromBranch")
+  transfersTo         Transfer[]            @relation("TransferToBranch")
+  shiftsAt            Shift[]
+  warehouseLocations  WarehouseLocation[]
+  notifications       Notification[]
 
   @@map("branches")
 }
 
+/// System users — cashiers, warehouse staff, admins, branch managers
 model User {
-  id            String     @id @default(uuid())
-  username      String     @unique @db.VarChar(50)
-  email         String?    @unique @db.VarChar(100)
-  passwordHash  String     @map("password_hash") @db.VarChar(255)
-  fullName      String     @map("full_name") @db.VarChar(100)
-  fullNameAr    String?    @map("full_name_ar") @db.VarChar(100)
-  role          UserRole   @default(CASHIER)
-  status        UserStatus @default(ACTIVE)
-  branchId      String?    @map("branch_id")
-  avatarUrl     String?    @map("avatar_url") @db.VarChar(500)
-  lastLoginAt   DateTime?  @map("last_login_at")
-  failedAttempts Int       @default(0) @map("failed_attempts")
-  lockedUntil   DateTime?  @map("locked_until")
-  createdAt     DateTime   @default(now()) @map("created_at")
-  updatedAt     DateTime   @updatedAt @map("updated_at")
+  id             String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  username       String      @unique @db.VarChar(50)
+  email          String?     @unique @db.VarChar(100)
+  passwordHash   String      @map("password_hash") @db.VarChar(255)
+  fullName       String      @map("full_name") @db.VarChar(100)
+  fullNameAr     String?     @map("full_name_ar") @db.VarChar(100)
+  role           UserRole    @default(CASHIER)
+  status         UserStatus  @default(ACTIVE)
+  branchId       String?     @map("branch_id") @db.Uuid
+  avatarUrl      String?     @map("avatar_url") @db.VarChar(500)
+  lastLoginAt    DateTime?   @map("last_login_at") @db.Timestamptz()
+  failedAttempts Int         @default(0) @map("failed_attempts")
+  lockedUntil    DateTime?   @map("locked_until") @db.Timestamptz()
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
-  branch          Branch?         @relation(fields: [branchId], references: [id])
-  refreshTokens   RefreshToken[]
-  auditLogs       AuditLog[]
-  productsCreated Product[]
-  sales           Sale[]
-  salesRefunded   Refund[]
-  shiftsOpened    Shift[]
-  transfersReq    Transfer[]      @relation("RequestedBy")
-  transfersApp    Transfer[]      @relation("ApprovedBy")
-  transfersDis    Transfer[]      @relation("DispatchedBy")
-  transfersRec    Transfer[]      @relation("ReceivedBy")
-  movements       InventoryMovement[]
-  notifications   Notification[]
-  purchases       Purchase[]
+  // Relations
+  branch              Branch?             @relation(fields: [branchId], references: [id])
+  refreshTokens       RefreshToken[]
+  auditLogs           AuditLog[]
+  productsCreated     Product[]           @relation("ProductCreatedBy")
+  salesCashier        Sale[]              @relation("SaleCashier")
+  shiftsOwned         Shift[]
+  transfersRequested  Transfer[]          @relation("TransferRequestedBy")
+  transfersApproved   Transfer[]          @relation("TransferApprovedBy")
+  transfersDispatched Transfer[]          @relation("TransferDispatchedBy")
+  transfersReceived   Transfer[]          @relation("TransferReceivedBy")
+  purchasesReceived   Purchase[]          @relation("PurchaseReceivedBy")
+  refundsProcessed    Refund[]
+  inventoryMovements  InventoryMovement[]
+  notifications       Notification[]
 
   @@map("users")
 }
 
+/// JWT refresh token store — one-time-use, rotated on every refresh
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  tokenHash String   @map("token_hash") @db.VarChar(255)
-  expiresAt DateTime @map("expires_at")
-  ipAddress String?  @map("ip_address")
-  userAgent String?  @map("user_agent")
-  isRevoked Boolean  @default(false) @map("is_revoked")
-  createdAt DateTime @default(now()) @map("created_at")
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @map("token_hash") @db.VarChar(255)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz()
+  ipAddress  String?   @map("ip_address")  // inet in PG, String in Prisma
+  userAgent  String?   @map("user_agent") @db.Text
+  isRevoked  Boolean   @default(false) @map("is_revoked")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz()
 
+  // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("refresh_tokens")
 }
 
+/// Immutable audit trail of every significant user action
 model AuditLog {
-  id        String    @id @default(uuid())
-  userId    String?   @map("user_id")
+  id        String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String?    @map("user_id") @db.Uuid
   action    LogAction
-  entity    String    @db.VarChar(50)
-  entityId  String?   @map("entity_id")
-  oldData   Json?     @map("old_data")
-  newData   Json?     @map("new_data")
-  ipAddress String?   @map("ip_address")
-  userAgent String?   @map("user_agent")
-  notes     String?
-  createdAt DateTime  @default(now()) @map("created_at")
+  entity    String     @db.VarChar(50)
+  entityId  String?    @map("entity_id") @db.Uuid
+  oldData   Json?      @map("old_data")
+  newData   Json?      @map("new_data")
+  ipAddress String?    @map("ip_address")   // inet
+  userAgent String?    @map("user_agent") @db.Text
+  notes     String?    @db.Text
+  createdAt DateTime?  @default(now()) @map("created_at") @db.Timestamptz()
 
+  // Relations
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@index([userId], map: "idx_audit_logs_user")
+  @@index([entity, entityId], map: "idx_audit_logs_entity")
+  @@index([createdAt], map: "idx_audit_logs_created")
   @@map("audit_logs")
 }
 
+// ============================================================
+// PRODUCT CATALOG
+// ============================================================
+
+/// Product categories (supports one level of parent nesting)
 model Category {
-  id        String    @id @default(uuid())
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   code      String    @unique @db.VarChar(20)
   name      String    @db.VarChar(100)
   nameAr    String?   @map("name_ar") @db.VarChar(100)
-  parentId  String?   @map("parent_id")
+  parentId  String?   @map("parent_id") @db.Uuid
   isActive  Boolean   @default(true) @map("is_active")
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
+  // Self-relation for subcategories
   parent   Category?  @relation("CategoryParent", fields: [parentId], references: [id])
   children Category[] @relation("CategoryParent")
   products Product[]
@@ -193,27 +254,29 @@ model Category {
   @@map("categories")
 }
 
+/// Appliance brands (LG, Samsung, Sharp, Toshiba …)
 model Brand {
-  id        String    @id @default(uuid())
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   name      String    @unique @db.VarChar(100)
   nameAr    String?   @map("name_ar") @db.VarChar(100)
   logoUrl   String?   @map("logo_url") @db.VarChar(500)
   isActive  Boolean   @default(true) @map("is_active")
-  createdAt DateTime  @default(now()) @map("created_at")
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz()
 
-  deviceTypes DeviceType[]
   products    Product[]
+  deviceTypes DeviceType[]
 
   @@map("brands")
 }
 
+/// Device types / appliance models within a brand (e.g. "LG Washing Machine WF-T1464")
 model DeviceType {
-  id        String   @id @default(uuid())
-  name      String   @unique @db.VarChar(100)
-  nameAr    String?  @map("name_ar") @db.VarChar(100)
-  brandId   String?  @map("brand_id")
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name      String    @unique @db.VarChar(100)
+  nameAr    String?   @map("name_ar") @db.VarChar(100)
+  brandId   String?   @map("brand_id") @db.Uuid
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamptz()
 
   brand    Brand?    @relation(fields: [brandId], references: [id])
   products Product[]
@@ -221,21 +284,22 @@ model DeviceType {
   @@map("device_types")
 }
 
+/// Spare part suppliers
 model Supplier {
-  id         String   @id @default(uuid())
-  code       String   @unique @db.VarChar(20)
-  name       String   @db.VarChar(100)
-  nameAr     String?  @map("name_ar") @db.VarChar(100)
-  contact    String?  @db.VarChar(100)
-  phone      String?  @db.VarChar(30)
-  email      String?  @db.VarChar(100)
-  address    String?
-  taxNumber  String?  @map("tax_number") @db.VarChar(50)
-  balance    Decimal  @default(0) @db.Decimal(15, 2)
-  notes      String?
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  code       String    @unique @db.VarChar(20)
+  name       String    @db.VarChar(100)
+  nameAr     String?   @map("name_ar") @db.VarChar(100)
+  contact    String?   @db.VarChar(100)
+  phone      String?   @db.VarChar(30)
+  email      String?   @db.VarChar(100)
+  address    String?   @db.Text
+  taxNumber  String?   @map("tax_number") @db.VarChar(50)
+  balance    Decimal   @default(0) @db.Decimal(12, 2)
+  notes      String?   @db.Text
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt  DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
   products  Product[]
   purchases Purchase[]
@@ -243,193 +307,263 @@ model Supplier {
   @@map("suppliers")
 }
 
+/// Core product / spare part master record
+/// Internal code is the primary lookup; barcode is optional for scanner use
 model Product {
-  id               String   @id @default(uuid())
-  internalCode     String   @unique @map("internal_code") @db.VarChar(50)
-  barcode          String?  @unique @db.VarChar(100)
-  name             String   @db.VarChar(200)
-  nameAr           String?  @map("name_ar") @db.VarChar(200)
-  description      String?
-  categoryId       String?  @map("category_id")
-  brandId          String?  @map("brand_id")
-  deviceTypeId     String?  @map("device_type_id")
-  compatibleModels String[] @map("compatible_models")
-  purchasePrice    Decimal  @default(0) @map("purchase_price") @db.Decimal(15, 2)
-  sellingPrice     Decimal  @default(0) @map("selling_price") @db.Decimal(15, 2)
-  minSellingPrice  Decimal? @map("min_selling_price") @db.Decimal(15, 2)
-  taxRate          Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
-  supplierId       String?  @map("supplier_id")
-  imageUrl         String?  @map("image_url") @db.VarChar(500)
-  minStockAlert    Int      @default(5) @map("min_stock_alert")
-  isActive         Boolean  @default(true) @map("is_active")
-  notes            String?
-  createdBy        String?  @map("created_by")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id               String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  internalCode     String    @unique @map("internal_code") @db.VarChar(50)
+  barcode          String?   @unique @db.VarChar(100)
+  name             String    @db.VarChar(200)
+  nameAr           String?   @map("name_ar") @db.VarChar(200)
+  description      String?   @db.Text
+  categoryId       String?   @map("category_id") @db.Uuid
+  brandId          String?   @map("brand_id") @db.Uuid
+  deviceTypeId     String?   @map("device_type_id") @db.Uuid
+  compatibleModels String[]  @map("compatible_models")   // text[] array
+  purchasePrice    Decimal   @default(0) @map("purchase_price") @db.Decimal(12, 2)
+  sellingPrice     Decimal   @default(0) @map("selling_price") @db.Decimal(12, 2)
+  minSellingPrice  Decimal?  @map("min_selling_price") @db.Decimal(12, 2)
+  taxRate          Decimal   @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  supplierId       String?   @map("supplier_id") @db.Uuid
+  imageUrl         String?   @map("image_url") @db.VarChar(500)
+  minStockAlert    Int       @default(5) @map("min_stock_alert")
+  isActive         Boolean   @default(true) @map("is_active")
+  notes            String?   @db.Text
+  createdBy        String?   @map("created_by") @db.Uuid
+  createdAt        DateTime? @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt        DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
-  category     Category?           @relation(fields: [categoryId], references: [id])
-  brand        Brand?              @relation(fields: [brandId], references: [id])
-  deviceType   DeviceType?         @relation(fields: [deviceTypeId], references: [id])
-  supplier     Supplier?           @relation(fields: [supplierId], references: [id])
-  creator      User?               @relation(fields: [createdBy], references: [id])
-  inventory    Inventory[]
-  saleItems    SaleItem[]
-  movements    InventoryMovement[]
-  transferItems TransferItem[]
-  purchaseItems PurchaseItem[]
+  // Relations
+  category           Category?           @relation(fields: [categoryId], references: [id])
+  brand              Brand?              @relation(fields: [brandId], references: [id])
+  deviceType         DeviceType?         @relation(fields: [deviceTypeId], references: [id])
+  supplier           Supplier?           @relation(fields: [supplierId], references: [id])
+  createdByUser      User?               @relation("ProductCreatedBy", fields: [createdBy], references: [id])
+  inventory          Inventory[]
+  inventoryMovements InventoryMovement[]
+  saleItems          SaleItem[]
+  purchaseItems      PurchaseItem[]
+  transferItems      TransferItem[]
 
+  @@index([categoryId], map: "idx_products_category")
+  @@index([brandId], map: "idx_products_brand")
+  @@index([supplierId], map: "idx_products_supplier")
+  @@index([internalCode], map: "idx_products_internal_code")
+  @@index([barcode], map: "idx_products_barcode")
+  @@index([isActive], map: "idx_products_active")
+  // Full-text trigram indexes declared via raw SQL in migrations:
+  // CREATE INDEX idx_products_name_trgm    ON products USING gin (name    gin_trgm_ops);
+  // CREATE INDEX idx_products_name_ar_trgm ON products USING gin (name_ar gin_trgm_ops);
   @@map("products")
 }
 
+// ============================================================
+// INVENTORY
+// ============================================================
+
+/// Current stock level per product per branch — single source of truth
 model Inventory {
-  id            String    @id @default(uuid())
-  productId     String    @map("product_id")
-  branchId      String    @map("branch_id")
-  quantity      Int       @default(0)
-  reservedQty   Int       @default(0) @map("reserved_qty")
-  location      String?   @db.VarChar(100)
-  lastCountedAt DateTime? @map("last_counted_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id             String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  productId      String    @map("product_id") @db.Uuid
+  branchId       String    @map("branch_id") @db.Uuid
+  quantity       Int       @default(0)
+  reservedQty    Int       @default(0) @map("reserved_qty")
+  location       String?   @db.VarChar(100)   // shelf / bin code
+  lastCountedAt  DateTime? @map("last_counted_at") @db.Timestamptz()
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
   product Product @relation(fields: [productId], references: [id])
   branch  Branch  @relation(fields: [branchId], references: [id])
 
-  @@unique([productId, branchId])
+  @@unique([productId, branchId], map: "inventory_product_id_branch_id_key")
+  @@index([productId], map: "idx_inventory_product")
+  @@index([branchId], map: "idx_inventory_branch")
+  @@index([productId, branchId], map: "idx_inventory_low_stock")
   @@map("inventory")
 }
 
+/// Immutable ledger — every stock change produces one row here
 model InventoryMovement {
-  id             String       @id @default(uuid())
-  productId      String       @map("product_id")
-  branchId       String       @map("branch_id")
-  type           MovementType
-  quantity       Int
-  quantityBefore Int          @map("quantity_before")
-  quantityAfter  Int          @map("quantity_after")
-  unitCost       Decimal?     @map("unit_cost") @db.Decimal(15, 2)
-  referenceId    String?      @map("reference_id")
-  referenceType  String?      @map("reference_type") @db.VarChar(50)
-  notes          String?
-  createdBy      String?      @map("created_by")
-  createdAt      DateTime     @default(now()) @map("created_at")
+  id            String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  productId     String       @map("product_id") @db.Uuid
+  branchId      String       @map("branch_id") @db.Uuid
+  type          MovementType
+  quantity      Int                           // positive = stock in, negative = stock out
+  quantityBefore Int         @map("quantity_before")
+  quantityAfter  Int         @map("quantity_after")
+  unitCost      Decimal?     @map("unit_cost") @db.Decimal(12, 2)
+  referenceId   String?      @map("reference_id") @db.Uuid
+  referenceType String?      @map("reference_type") @db.VarChar(50)
+  notes         String?      @db.Text
+  createdBy     String?      @map("created_by") @db.Uuid
+  createdAt     DateTime?    @default(now()) @map("created_at") @db.Timestamptz()
 
-  product Product @relation(fields: [productId], references: [id])
-  branch  Branch  @relation(fields: [branchId], references: [id])
-  creator User?   @relation(fields: [createdBy], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+  branch    Branch  @relation(fields: [branchId], references: [id])
+  createdByUser User? @relation(fields: [createdBy], references: [id])
 
+  @@index([productId], map: "idx_movements_product")
+  @@index([branchId], map: "idx_movements_branch")
+  @@index([referenceId], map: "idx_movements_reference")
+  @@index([createdAt], map: "idx_movements_created")
   @@map("inventory_movements")
 }
 
+/// Physical warehouse rack / shelf / bin locations
 model WarehouseLocation {
-  id          String   @id @default(uuid())
-  branchId    String   @map("branch_id")
-  code        String   @db.VarChar(20)
-  aisle       String?  @db.VarChar(10)
-  shelf       String?  @db.VarChar(10)
-  bin         String?  @db.VarChar(10)
-  description String?
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  branchId    String    @map("branch_id") @db.Uuid
+  code        String    @db.VarChar(20)
+  aisle       String?   @db.VarChar(10)
+  shelf       String?   @db.VarChar(10)
+  bin         String?   @db.VarChar(10)
+  description String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamptz()
 
   branch Branch @relation(fields: [branchId], references: [id])
 
-  @@unique([branchId, code])
+  @@unique([branchId, code], map: "warehouse_locations_branch_id_code_key")
   @@map("warehouse_locations")
 }
 
+// ============================================================
+// CUSTOMERS
+// ============================================================
+
 model Customer {
-  id             String   @id @default(uuid())
-  code           String   @unique @db.VarChar(20)
-  name           String   @db.VarChar(100)
-  phone          String?  @db.VarChar(30)
-  email          String?  @db.VarChar(100)
-  address        String?
-  taxNumber      String?  @map("tax_number") @db.VarChar(50)
-  balance        Decimal  @default(0) @db.Decimal(15, 2)
-  totalPurchases Decimal  @default(0) @map("total_purchases") @db.Decimal(15, 2)
-  isActive       Boolean  @default(true) @map("is_active")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id             String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  code           String    @unique @db.VarChar(20)
+  name           String    @db.VarChar(100)
+  phone          String?   @db.VarChar(30)
+  email          String?   @db.VarChar(100)
+  address        String?   @db.Text
+  taxNumber      String?   @map("tax_number") @db.VarChar(50)
+  balance        Decimal   @default(0) @db.Decimal(12, 2)
+  totalPurchases Decimal   @default(0) @map("total_purchases") @db.Decimal(14, 2)
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
   sales Sale[]
 
   @@map("customers")
 }
 
+// ============================================================
+// SHIFTS
+// ============================================================
+
+/// A cashier's working session — groups sales under a single reconcilable unit
+model Shift {
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  branchId        String    @map("branch_id") @db.Uuid
+  cashierId       String    @map("cashier_id") @db.Uuid
+  openingBalance  Decimal   @default(0) @map("opening_balance") @db.Decimal(12, 2)
+  closingBalance  Decimal?  @map("closing_balance") @db.Decimal(12, 2)
+  totalSales      Decimal?  @map("total_sales") @db.Decimal(14, 2)
+  totalCash       Decimal?  @map("total_cash") @db.Decimal(14, 2)
+  notes           String?   @db.Text
+  openedAt        DateTime? @default(now()) @map("opened_at") @db.Timestamptz()
+  closedAt        DateTime? @map("closed_at") @db.Timestamptz()
+
+  branch  Branch @relation(fields: [branchId], references: [id])
+  cashier User   @relation(fields: [cashierId], references: [id])
+  sales   Sale[]
+
+  @@map("shifts")
+}
+
+// ============================================================
+// SALES & POS
+// ============================================================
+
+/// POS invoice header
 model Sale {
-  id             String        @id @default(uuid())
+  id             String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   invoiceNumber  String        @unique @map("invoice_number") @db.VarChar(30)
-  branchId       String        @map("branch_id")
-  cashierId      String        @map("cashier_id")
-  customerId     String?       @map("customer_id")
+  branchId       String        @map("branch_id") @db.Uuid
+  cashierId      String        @map("cashier_id") @db.Uuid
+  customerId     String?       @map("customer_id") @db.Uuid
   status         SaleStatus    @default(COMPLETED)
-  subtotal       Decimal       @default(0) @db.Decimal(15, 2)
-  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  subtotal       Decimal       @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(12, 2)
   discountPct    Decimal       @default(0) @map("discount_pct") @db.Decimal(5, 2)
-  taxAmount      Decimal       @default(0) @map("tax_amount") @db.Decimal(15, 2)
-  total          Decimal       @default(0) @db.Decimal(15, 2)
+  taxAmount      Decimal       @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  total          Decimal       @default(0) @db.Decimal(12, 2)
   paymentMethod  PaymentMethod @default(CASH) @map("payment_method")
-  amountPaid     Decimal       @default(0) @map("amount_paid") @db.Decimal(15, 2)
-  changeAmount   Decimal       @default(0) @map("change_amount") @db.Decimal(15, 2)
-  notes          String?
-  shiftId        String?       @map("shift_id")
-  printedAt      DateTime?     @map("printed_at")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  amountPaid     Decimal       @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  changeAmount   Decimal       @default(0) @map("change_amount") @db.Decimal(12, 2)
+  notes          String?       @db.Text
+  shiftId        String?       @map("shift_id") @db.Uuid
+  printedAt      DateTime?     @map("printed_at") @db.Timestamptz()
+  createdAt      DateTime?     @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime?     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
   branch   Branch    @relation(fields: [branchId], references: [id])
-  cashier  User      @relation(fields: [cashierId], references: [id])
+  cashier  User      @relation("SaleCashier", fields: [cashierId], references: [id])
   customer Customer? @relation(fields: [customerId], references: [id])
+  shift    Shift?    @relation(fields: [shiftId], references: [id])
   items    SaleItem[]
   refunds  Refund[]
 
+  @@index([branchId], map: "idx_sales_branch")
+  @@index([cashierId], map: "idx_sales_cashier")
+  @@index([customerId], map: "idx_sales_customer")
+  @@index([status], map: "idx_sales_status")
+  @@index([createdAt], map: "idx_sales_created")
+  @@index([invoiceNumber], map: "idx_sales_invoice")
   @@map("sales")
 }
 
+/// Individual line items on a POS invoice
 model SaleItem {
-  id             String   @id @default(uuid())
-  saleId         String   @map("sale_id")
-  productId      String   @map("product_id")
+  id             String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  saleId         String    @map("sale_id") @db.Uuid
+  productId      String    @map("product_id") @db.Uuid
   quantity       Int
-  unitPrice      Decimal  @map("unit_price") @db.Decimal(15, 2)
-  discountPct    Decimal  @default(0) @map("discount_pct") @db.Decimal(5, 2)
-  discountAmount Decimal  @default(0) @map("discount_amount") @db.Decimal(15, 2)
-  taxRate        Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 2)
-  taxAmount      Decimal  @default(0) @map("tax_amount") @db.Decimal(15, 2)
-  total          Decimal  @db.Decimal(15, 2)
-  costPrice      Decimal? @map("cost_price") @db.Decimal(15, 2)
-  createdAt      DateTime @default(now()) @map("created_at")
+  unitPrice      Decimal   @map("unit_price") @db.Decimal(12, 2)
+  discountPct    Decimal   @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  discountAmount Decimal   @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxRate        Decimal   @default(0) @map("tax_rate") @db.Decimal(5, 2)
+  taxAmount      Decimal   @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  total          Decimal   @db.Decimal(12, 2)
+  costPrice      Decimal?  @map("cost_price") @db.Decimal(12, 2)  // snapshot at sale time
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamptz()
 
-  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
   refundItems RefundItem[]
 
+  @@index([saleId], map: "idx_sale_items_sale")
+  @@index([productId], map: "idx_sale_items_product")
   @@map("sale_items")
 }
 
+/// Refund / return header
 model Refund {
-  id            String        @id @default(uuid())
-  saleId        String        @map("sale_id")
-  processedBy   String        @map("processed_by")
-  reason        String
-  total         Decimal       @db.Decimal(15, 2)
+  id            String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  saleId        String        @map("sale_id") @db.Uuid
+  processedBy   String        @map("processed_by") @db.Uuid
+  reason        String        @db.Text
+  total         Decimal       @db.Decimal(12, 2)
   paymentMethod PaymentMethod @map("payment_method")
-  createdAt     DateTime      @default(now()) @map("created_at")
+  createdAt     DateTime?     @default(now()) @map("created_at") @db.Timestamptz()
 
-  sale      Sale         @relation(fields: [saleId], references: [id])
-  processor User         @relation(fields: [processedBy], references: [id])
-  items     RefundItem[]
+  sale         Sale         @relation(fields: [saleId], references: [id])
+  processedByUser User     @relation(fields: [processedBy], references: [id])
+  items        RefundItem[]
 
   @@map("refunds")
 }
 
 model RefundItem {
-  id         String  @id @default(uuid())
-  refundId   String  @map("refund_id")
-  saleItemId String  @map("sale_item_id")
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  refundId   String   @map("refund_id") @db.Uuid
+  saleItemId String   @map("sale_item_id") @db.Uuid
   quantity   Int
-  total      Decimal @db.Decimal(15, 2)
+  total      Decimal  @db.Decimal(12, 2)
 
   refund   Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
   saleItem SaleItem @relation(fields: [saleItemId], references: [id])
@@ -437,57 +571,44 @@ model RefundItem {
   @@map("refund_items")
 }
 
-model Shift {
-  id             String    @id @default(uuid())
-  branchId       String    @map("branch_id")
-  cashierId      String    @map("cashier_id")
-  openingBalance Decimal   @default(0) @map("opening_balance") @db.Decimal(15, 2)
-  closingBalance Decimal?  @map("closing_balance") @db.Decimal(15, 2)
-  totalSales     Decimal?  @map("total_sales") @db.Decimal(15, 2)
-  totalCash      Decimal?  @map("total_cash") @db.Decimal(15, 2)
-  notes          String?
-  openedAt       DateTime  @default(now()) @map("opened_at")
-  closedAt       DateTime? @map("closed_at")
+// ============================================================
+// PURCHASES
+// ============================================================
 
-  branch  Branch @relation(fields: [branchId], references: [id])
-  cashier User   @relation(fields: [cashierId], references: [id])
-
-  @@map("shifts")
-}
-
+/// Supplier purchase / GRN header
 model Purchase {
-  id             String    @id @default(uuid())
-  purchaseNumber String    @unique @map("purchase_number") @db.VarChar(30)
-  branchId       String    @map("branch_id")
-  supplierId     String    @map("supplier_id")
-  receivedBy     String?   @map("received_by")
-  subtotal       Decimal   @default(0) @db.Decimal(15, 2)
-  discountAmount Decimal   @default(0) @map("discount_amount") @db.Decimal(15, 2)
-  taxAmount      Decimal   @default(0) @map("tax_amount") @db.Decimal(15, 2)
-  total          Decimal   @default(0) @db.Decimal(15, 2)
-  amountPaid     Decimal   @default(0) @map("amount_paid") @db.Decimal(15, 2)
-  notes          String?
-  invoiceRef     String?   @map("invoice_ref") @db.VarChar(100)
-  receivedAt     DateTime? @map("received_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  purchaseNumber  String    @unique @map("purchase_number") @db.VarChar(30)
+  branchId        String    @map("branch_id") @db.Uuid
+  supplierId      String    @map("supplier_id") @db.Uuid
+  receivedBy      String?   @map("received_by") @db.Uuid
+  subtotal        Decimal   @default(0) @db.Decimal(12, 2)
+  discountAmount  Decimal   @default(0) @map("discount_amount") @db.Decimal(12, 2)
+  taxAmount       Decimal   @default(0) @map("tax_amount") @db.Decimal(12, 2)
+  total           Decimal   @default(0) @db.Decimal(12, 2)
+  amountPaid      Decimal   @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  notes           String?   @db.Text
+  invoiceRef      String?   @map("invoice_ref") @db.VarChar(100)  // supplier's own invoice #
+  receivedAt      DateTime? @map("received_at") @db.Timestamptz()
+  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt       DateTime? @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
-  branch   Branch        @relation(fields: [branchId], references: [id])
-  supplier Supplier      @relation(fields: [supplierId], references: [id])
-  receiver User?         @relation(fields: [receivedBy], references: [id])
-  items    PurchaseItem[]
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  supplier     Supplier      @relation(fields: [supplierId], references: [id])
+  receivedByUser User?       @relation("PurchaseReceivedBy", fields: [receivedBy], references: [id])
+  items        PurchaseItem[]
 
   @@map("purchases")
 }
 
 model PurchaseItem {
-  id         String  @id @default(uuid())
-  purchaseId String  @map("purchase_id")
-  productId  String  @map("product_id")
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  purchaseId String    @map("purchase_id") @db.Uuid
+  productId  String    @map("product_id") @db.Uuid
   quantity   Int
-  unitCost   Decimal @map("unit_cost") @db.Decimal(15, 2)
-  total      Decimal @db.Decimal(15, 2)
-  createdAt  DateTime @default(now()) @map("created_at")
+  unitCost   Decimal   @map("unit_cost") @db.Decimal(12, 2)
+  total      Decimal   @db.Decimal(12, 2)
+  createdAt  DateTime? @default(now()) @map("created_at") @db.Timestamptz()
 
   purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
   product  Product  @relation(fields: [productId], references: [id])
@@ -495,44 +616,52 @@ model PurchaseItem {
   @@map("purchase_items")
 }
 
+// ============================================================
+// STOCK TRANSFERS  (store ↔ warehouse synchronisation)
+// ============================================================
+
+/// Transfer request between any two branches / warehouse
 model Transfer {
-  id             String         @id @default(uuid())
+  id             String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   transferNumber String         @unique @map("transfer_number") @db.VarChar(30)
-  fromBranchId   String         @map("from_branch_id")
-  toBranchId     String         @map("to_branch_id")
+  fromBranchId   String         @map("from_branch_id") @db.Uuid
+  toBranchId     String         @map("to_branch_id") @db.Uuid
   status         TransferStatus @default(PENDING)
-  requestedBy    String         @map("requested_by")
-  approvedBy     String?        @map("approved_by")
-  dispatchedBy   String?        @map("dispatched_by")
-  receivedBy     String?        @map("received_by")
-  notes          String?
-  requestedAt    DateTime       @default(now()) @map("requested_at")
-  approvedAt     DateTime?      @map("approved_at")
-  dispatchedAt   DateTime?      @map("dispatched_at")
-  receivedAt     DateTime?      @map("received_at")
-  createdAt      DateTime       @default(now()) @map("created_at")
-  updatedAt      DateTime       @updatedAt @map("updated_at")
+  requestedBy    String         @map("requested_by") @db.Uuid
+  approvedBy     String?        @map("approved_by") @db.Uuid
+  dispatchedBy   String?        @map("dispatched_by") @db.Uuid
+  receivedBy     String?        @map("received_by") @db.Uuid
+  notes          String?        @db.Text
+  requestedAt    DateTime?      @default(now()) @map("requested_at") @db.Timestamptz()
+  approvedAt     DateTime?      @map("approved_at") @db.Timestamptz()
+  dispatchedAt   DateTime?      @map("dispatched_at") @db.Timestamptz()
+  receivedAt     DateTime?      @map("received_at") @db.Timestamptz()
+  createdAt      DateTime?      @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt      DateTime?      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
 
-  fromBranch Branch  @relation("FromBranch", fields: [fromBranchId], references: [id])
-  toBranch   Branch  @relation("ToBranch", fields: [toBranchId], references: [id])
-  requester  User    @relation("RequestedBy", fields: [requestedBy], references: [id])
-  approver   User?   @relation("ApprovedBy", fields: [approvedBy], references: [id])
-  dispatcher User?   @relation("DispatchedBy", fields: [dispatchedBy], references: [id])
-  receiver   User?   @relation("ReceivedBy", fields: [receivedBy], references: [id])
-  items      TransferItem[]
+  fromBranch       Branch  @relation("TransferFromBranch", fields: [fromBranchId], references: [id])
+  toBranch         Branch  @relation("TransferToBranch", fields: [toBranchId], references: [id])
+  requestedByUser  User    @relation("TransferRequestedBy", fields: [requestedBy], references: [id])
+  approvedByUser   User?   @relation("TransferApprovedBy", fields: [approvedBy], references: [id])
+  dispatchedByUser User?   @relation("TransferDispatchedBy", fields: [dispatchedBy], references: [id])
+  receivedByUser   User?   @relation("TransferReceivedBy", fields: [receivedBy], references: [id])
+  items            TransferItem[]
 
+  @@index([fromBranchId], map: "idx_transfers_from_branch")
+  @@index([toBranchId], map: "idx_transfers_to_branch")
+  @@index([status], map: "idx_transfers_status")
   @@map("transfers")
 }
 
 model TransferItem {
-  id           String  @id @default(uuid())
-  transferId   String  @map("transfer_id")
-  productId    String  @map("product_id")
-  requestedQty Int     @map("requested_qty")
-  approvedQty  Int?    @map("approved_qty")
-  receivedQty  Int?    @map("received_qty")
-  notes        String?
-  createdAt    DateTime @default(now()) @map("created_at")
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  transferId   String    @map("transfer_id") @db.Uuid
+  productId    String    @map("product_id") @db.Uuid
+  requestedQty Int       @map("requested_qty")
+  approvedQty  Int?      @map("approved_qty")
+  receivedQty  Int?      @map("received_qty")
+  notes        String?   @db.Text
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamptz()
 
   transfer Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
   product  Product  @relation(fields: [productId], references: [id])
@@ -540,38 +669,49 @@ model TransferItem {
   @@map("transfer_items")
 }
 
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
 model Notification {
-  id            String           @id @default(uuid())
+  id            String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   type          NotificationType
   title         String           @db.VarChar(200)
   titleAr       String?          @map("title_ar") @db.VarChar(200)
-  message       String
-  messageAr     String?          @map("message_ar")
-  userId        String?          @map("user_id")
-  branchId      String?          @map("branch_id")
-  referenceId   String?          @map("reference_id")
+  message       String           @db.Text
+  messageAr     String?          @map("message_ar") @db.Text
+  userId        String?          @map("user_id") @db.Uuid
+  branchId      String?          @map("branch_id") @db.Uuid
+  referenceId   String?          @map("reference_id") @db.Uuid
   referenceType String?          @map("reference_type") @db.VarChar(50)
   isRead        Boolean          @default(false) @map("is_read")
-  readAt        DateTime?        @map("read_at")
-  createdAt     DateTime         @default(now()) @map("created_at")
+  readAt        DateTime?        @map("read_at") @db.Timestamptz()
+  createdAt     DateTime?        @default(now()) @map("created_at") @db.Timestamptz()
 
-  user   User?   @relation(fields: [userId], references: [id])
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
   branch Branch? @relation(fields: [branchId], references: [id])
 
+  @@index([userId, isRead], map: "idx_notifications_user")
+  @@index([branchId], map: "idx_notifications_branch")
   @@map("notifications")
 }
 
+// ============================================================
+// SYNC LOG  (offline / multi-branch delta sync queue)
+// ============================================================
+
 model SyncLog {
-  id        String     @id @default(uuid())
+  id        String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
   entity    String     @db.VarChar(50)
-  entityId  String     @map("entity_id")
+  entityId  String     @map("entity_id") @db.Uuid
   action    String     @db.VarChar(20)
   payload   Json
   status    SyncStatus @default(PENDING)
   attempts  Int        @default(0)
-  lastError String?    @map("last_error")
-  syncedAt  DateTime?  @map("synced_at")
-  createdAt DateTime   @default(now()) @map("created_at")
+  lastError String?    @map("last_error") @db.Text
+  syncedAt  DateTime?  @map("synced_at") @db.Timestamptz()
+  createdAt DateTime?  @default(now()) @map("created_at") @db.Timestamptz()
 
+  @@index([status], map: "idx_sync_log_status")
   @@map("sync_log")
 }

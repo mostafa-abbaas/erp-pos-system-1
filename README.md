@@ -1,251 +1,174 @@
 # ERP/POS System — Home Appliances Spare Parts
-## نظام إدارة متجر قطع غيار الأجهزة المنزلية
+نظام إدارة المبيعات والمستودع لقطع غيار الأجهزة المنزلية
 
-A full production-grade ERP/POS system built with **NestJS + Next.js + PostgreSQL**.
+A full-stack Enterprise ERP/POS & Warehouse system built with **NestJS + PostgreSQL + Next.js 14**.
 
 ---
 
-## 🗂 Project Structure
+## Features
+
+- **POS Terminal** — barcode scanner, cart, thermal receipt printing (80mm), shift management
+- **Inventory Control** — multi-branch stock levels, movements ledger, low-stock alerts
+- **Purchases** — supplier invoices, automatic stock increase, supplier balance tracking
+- **Stock Transfers** — branch↔warehouse workflow (PENDING → APPROVED → IN_TRANSIT → COMPLETED)
+- **Sales Reports** — revenue, profit, top products, Excel export
+- **User Management** — roles (Admin / Cashier / Warehouse / Branch Manager), branch assignment
+- **Categories & Brands** — product catalog management
+- **Shift Management** — open/close shifts, cash reconciliation
+- **Arabic RTL UI** — full bilingual support (Arabic primary, English secondary)
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | NestJS 10, pg (node-postgres), bcrypt, JWT, Passport |
+| Frontend | Next.js 14 (App Router), Zustand, React Query, Tailwind CSS, Recharts |
+| Database | PostgreSQL 16 |
+| Schema Reference | Prisma (schema only — pg driver used at runtime) |
+| Auth | JWT access tokens + rotating refresh tokens, account lockout |
+
+---
+
+## Quick Start (Local)
+
+### Prerequisites
+- Node.js 18+
+- PostgreSQL 16
+- npm 9+
+
+### 1 — Database setup
+
+```bash
+# Create database and user
+psql -U postgres << SQL
+CREATE ROLE erp_user WITH LOGIN PASSWORD 'erp_password_dev';
+CREATE DATABASE erp_pos OWNER erp_user;
+GRANT ALL PRIVILEGES ON DATABASE erp_pos TO erp_user;
+SQL
+
+# Run schema + seed
+psql -h 127.0.0.1 -U erp_user -d erp_pos -f scripts/init.sql
+```
+
+### 2 — Backend
+
+```bash
+cd backend
+cp .env.example .env          # edit DATABASE_URL and JWT secrets
+npm install
+npm run build
+node dist/main.js             # production
+# OR
+npm run start:dev             # dev mode with watch
+```
+
+Backend runs at **http://localhost:3001/api**  
+Swagger docs at **http://localhost:3001/api/docs**
+
+### 3 — Frontend
+
+```bash
+cd frontend
+cp .env.example .env.local    # set NEXT_PUBLIC_API_URL if needed
+npm install
+npm run dev                   # dev  → http://localhost:3000
+# OR
+npm run build && npm start    # production
+```
+
+### Default credentials
+
+| Field | Value |
+|---|---|
+| Username | `admin` |
+| Password | `Admin@1234` |
+
+> ⚠️ Change the admin password immediately after first login.
+
+---
+
+## Project Structure
 
 ```
 erp-pos/
-├── backend/              # NestJS API server
+├── backend/
 │   ├── src/
-│   │   ├── modules/
-│   │   │   ├── auth/         # JWT auth, RBAC
-│   │   │   ├── products/     # Products CRUD, barcode, Excel import
-│   │   │   ├── inventory/    # Stock, movements, adjustments
-│   │   │   ├── sales/        # POS, invoices, refunds
-│   │   │   ├── transfers/    # Inter-branch transfers
-│   │   │   ├── purchases/    # Purchase orders
-│   │   │   ├── reports/      # Sales, profit, dashboard
-│   │   │   ├── notifications/# Real-time via WebSocket
-│   │   │   └── sync/         # Store ↔ Warehouse sync
-│   │   ├── common/           # Guards, decorators, interceptors
-│   │   └── database/         # Prisma service
-│   └── prisma/
-│       └── schema.prisma     # Full DB schema
-│
-├── frontend/             # Next.js 14 app
-│   └── src/
-│       ├── app/
-│       │   ├── page.tsx       # Dashboard
-│       │   ├── login/         # Login page
-│       │   ├── pos/           # POS screen (barcode + cart)
-│       │   ├── products/      # Product management
-│       │   ├── inventory/     # Stock levels + movements
-│       │   └── reports/       # Charts and analytics
-│       ├── components/
-│       │   ├── layout/        # Sidebar, Header, AppLayout
-│       │   └── ui/            # Toaster, reusable UI
-│       ├── store/             # Zustand: auth + cart
-│       └── lib/               # Axios API client, utils
-│
+│   │   ├── app.module.ts
+│   │   ├── main.ts
+│   │   ├── database/          ← pg Pool service
+│   │   ├── common/            ← decorators, guards
+│   │   └── modules/
+│   │       ├── auth/
+│   │       ├── products/
+│   │       ├── inventory/
+│   │       ├── sales/
+│   │       ├── purchases/
+│   │       ├── transfers/
+│   │       ├── shifts/
+│   │       ├── reports/
+│   │       ├── users/
+│   │       ├── categories/
+│   │       ├── notifications/
+│   │       └── health/
+│   ├── prisma/schema.prisma   ← reference schema (not used at runtime)
+│   └── package.json
+├── frontend/
+│   ├── src/
+│   │   ├── app/               ← Next.js App Router pages
+│   │   ├── components/        ← Sidebar, Header, AppLayout
+│   │   ├── lib/               ← API client, utils
+│   │   └── store/             ← Zustand (auth, cart)
+│   └── package.json
 ├── scripts/
-│   ├── init.sql          # DB schema + seed data
-│   ├── backup.sh         # Automated backup
-│   └── restore.sh        # DB restore
-│
-├── docker-compose.yml    # Full stack orchestration
-└── .env.example          # Environment template
+│   ├── init.sql               ← Full schema + seed data
+│   ├── backup.sh
+│   └── restore.sh
+└── docker-compose.yml
 ```
 
 ---
 
-## 🚀 Quick Start
+## API Modules
 
-### Prerequisites
-- Docker & Docker Compose
-- Node.js 20+ (for local dev)
-
-### 1. Clone and configure
-```bash
-git clone <repo>
-cd erp-pos
-cp .env.example .env
-# Edit .env — change all passwords and secrets!
-```
-
-### 2. Generate JWT secrets
-```bash
-openssl rand -base64 64   # for JWT_SECRET
-openssl rand -base64 64   # for JWT_REFRESH_SECRET
-```
-
-### 3. Start everything
-```bash
-docker compose up -d
-```
-
-### 4. Access
-| Service   | URL                              |
-|-----------|----------------------------------|
-| Frontend  | http://localhost:3000            |
-| Backend   | http://localhost:3001/api        |
-| Swagger   | http://localhost:3001/api/docs   |
-
-### Default login
-- Username: `admin`
-- Password: `Admin@1234`
+| Module | Base Route | Key Endpoints |
+|---|---|---|
+| Auth | `/api/v1/auth` | login, refresh, profile, change-password |
+| Products | `/api/v1/products` | CRUD, barcode lookup, Excel import/export, low-stock |
+| Inventory | `/api/v1/inventory` | stock, movements, adjust, count |
+| Sales | `/api/v1/sales` | create, list, daily-summary, refund |
+| Purchases | `/api/v1/purchases` | invoices, suppliers CRUD, report |
+| Transfers | `/api/v1/transfers` | create, status workflow |
+| Shifts | `/api/v1/shifts` | open, close, active, report |
+| Reports | `/api/v1/reports` | dashboard, sales, profit, Excel export |
+| Users | `/api/v1/users` | CRUD, branches, reset-password, audit-logs |
+| Categories | `/api/v1/categories` | categories + brands CRUD |
+| Notifications | `/api/v1/notifications` | list, unread-count, mark-read |
+| Health | `/api/health` | database connectivity check |
 
 ---
 
-## 🔧 Local Development
-
-### Backend
-```bash
-cd backend
-npm install
-npx prisma generate
-npx prisma db push        # applies schema to DB
-npm run start:dev
-```
-
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
----
-
-## 🏗 Architecture
-
-### Backend (NestJS)
-- **Clean Architecture** — modules, services, repositories separated
-- **JWT + Refresh Token** rotation
-- **RBAC** — Admin / Branch Manager / Cashier / Warehouse
-- **WebSocket** (Socket.IO) for real-time notifications
-- **Prisma ORM** with PostgreSQL
-- **Rate limiting** via `@nestjs/throttler`
-- **Swagger** auto-documentation
-
-### Frontend (Next.js 14)
-- **App Router** with layouts
-- **React Query** for server state
-- **Zustand** for local state (auth, cart)
-- **Recharts** for dashboards
-- **Arabic RTL + English** bilingual UI
-- **Tailwind CSS** with dark mode
-
-### Database (PostgreSQL 16)
-- Full relational schema with foreign keys & constraints
-- `pg_trgm` extension for fast text search
-- Inventory movements audit trail
-- Automatic `updated_at` triggers
-
----
-
-## 🔑 API Reference
-
-Full Swagger docs at `/api/docs`. Key endpoints:
-
-| Method | Endpoint                          | Description              |
-|--------|-----------------------------------|--------------------------|
-| POST   | /api/v1/auth/login                | Login                    |
-| POST   | /api/v1/auth/refresh              | Refresh token            |
-| GET    | /api/v1/products                  | List products            |
-| GET    | /api/v1/products/barcode/:code    | Instant barcode lookup   |
-| POST   | /api/v1/products/import/excel     | Bulk import from Excel   |
-| GET    | /api/v1/products/export/excel     | Export to Excel          |
-| POST   | /api/v1/sales                     | Create sale (POS)        |
-| POST   | /api/v1/sales/:id/refund          | Process refund           |
-| GET    | /api/v1/inventory                 | Stock levels             |
-| POST   | /api/v1/inventory/adjust          | Manual adjustment        |
-| GET    | /api/v1/reports/dashboard         | Dashboard KPIs           |
-| GET    | /api/v1/reports/sales             | Sales report             |
-| GET    | /api/v1/reports/profit            | Profit report            |
-| GET    | /api/v1/reports/sales/export      | Export report to Excel   |
-
----
-
-## ⌨️ POS Keyboard Shortcuts
-
-| Key     | Action                     |
-|---------|----------------------------|
-| `F2`    | Focus product search       |
-| `F10`   | Open checkout              |
-| `ESC`   | Clear search               |
-| USB scanner | Auto-detect barcode   |
-
----
-
-## 🔐 Roles & Permissions
-
-| Feature              | Admin | Branch Mgr | Cashier | Warehouse |
-|----------------------|-------|------------|---------|-----------|
-| Full system access   | ✅    |            |         |           |
-| Create/edit products | ✅    | ✅         |         |           |
-| Process sales        | ✅    | ✅         | ✅      |           |
-| Process refunds      | ✅    | ✅         | ✅      |           |
-| Stock adjustments    | ✅    | ✅         |         | ✅        |
-| Approve transfers    | ✅    | ✅         |         |           |
-| View reports         | ✅    | ✅         |         |           |
-| User management      | ✅    |            |         |           |
-
----
-
-## 📦 Excel Import Format
-
-Column order for product import:
-1. Internal Code *(required)*
-2. Barcode
-3. Name *(required)*
-4. Name Arabic
-5. Category Code
-6. Purchase Price
-7. Selling Price
-8. Min Stock Alert
-
-Download the export template to use as import reference.
-
----
-
-## 🔄 Backup
+## Docker (optional)
 
 ```bash
-# Manual backup
-./scripts/backup.sh ./backups
-
-# Restore from backup
-./scripts/restore.sh ./backups/erp_backup_20240101_120000.sql.gz
-
-# Automated daily backup (add to crontab)
-0 2 * * * /path/to/erp-pos/scripts/backup.sh /var/backups/erp >> /var/log/erp-backup.log 2>&1
+docker compose up -d          # starts postgres + backend + frontend
+docker compose down
+docker compose logs -f backend
 ```
 
 ---
 
-## 🌍 Multi-Branch Expansion
+## Roles & Permissions
 
-The system is designed for multi-branch from day one:
-- Every sale, inventory record, and transfer is scoped to a `branch_id`
-- Branch managers only see their branch data
-- Admin sees all branches
-- Stock transfers flow from any branch to any branch
-- Real-time sync via WebSocket rooms per branch
-
-To add a new branch:
-```sql
-INSERT INTO branches (code, name, name_ar) VALUES ('BR02', 'Branch 2', 'الفرع الثاني');
-```
+| Role | Access |
+|---|---|
+| ADMIN | Everything |
+| BRANCH_MANAGER | Sales, inventory, products, purchases, transfers, reports, users (read) |
+| CASHIER | POS, shifts, dashboard |
+| WAREHOUSE | Inventory, transfers, purchases |
 
 ---
 
-## 📋 Tech Stack
-
-| Layer       | Technology                          |
-|-------------|-------------------------------------|
-| Backend     | NestJS 10, Node.js 20               |
-| ORM         | Prisma 5                            |
-| Database    | PostgreSQL 16                       |
-| Cache       | Redis 7                             |
-| Realtime    | Socket.IO 4                         |
-| Auth        | JWT + Refresh Tokens (bcrypt)       |
-| Frontend    | Next.js 14 (App Router)             |
-| State       | Zustand + React Query               |
-| UI          | Tailwind CSS, Radix UI              |
-| Charts      | Recharts                            |
-| Excel       | ExcelJS                             |
-| Deployment  | Docker + Docker Compose             |
+## License
+MIT

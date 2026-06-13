@@ -1,277 +1,193 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 import * as dayjs from 'dayjs';
 import * as ExcelJS from 'exceljs';
 
 @Injectable()
 export class ReportsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private db: DatabaseService) {}
 
-  async getDashboardStats(branchId?: string) {
+  async getDashboard(branchId?: string) {
+    const branchFilter = branchId ? `AND branch_id = '${branchId}'` : '';
     const today = dayjs().startOf('day').toDate();
-    const thisMonth = dayjs().startOf('month').toDate();
+    const monthStart = dayjs().startOf('month').toDate();
 
-    const salesWhere: any = { status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] } };
-    if (branchId) salesWhere.branchId = branchId;
-
-    const [
-      todaySales,
-      monthSales,
-      totalProducts,
-      lowStockCount,
-      pendingTransfers,
-      topProducts,
-    ] = await Promise.all([
-      this.prisma.sale.aggregate({
-        where: { ...salesWhere, createdAt: { gte: today } },
-        _sum: { total: true },
-        _count: { id: true },
-      }),
-      this.prisma.sale.aggregate({
-        where: { ...salesWhere, createdAt: { gte: thisMonth } },
-        _sum: { total: true },
-        _count: { id: true },
-      }),
-      this.prisma.product.count({ where: { isActive: true } }),
-      this.prisma.$queryRaw<{ count: bigint }[]>`
-        SELECT COUNT(*)::int as count FROM inventory i
-        JOIN products p ON i.product_id = p.id
-        WHERE p.is_active = true AND i.quantity <= p.min_stock_alert
-        ${branchId ? this.prisma.$queryRaw`AND i.branch_id = ${branchId}::uuid` : this.prisma.$queryRaw``}
-      `,
-      this.prisma.transfer.count({
-        where: { status: { in: ['PENDING', 'APPROVED'] } },
-      }),
-      this.prisma.saleItem.groupBy({
-        by: ['productId'],
-        where: {
-          sale: { ...salesWhere, createdAt: { gte: thisMonth } },
-        },
-        _sum: { quantity: true, total: true },
-        orderBy: { _sum: { quantity: 'desc' } },
-        take: 5,
-      }),
+    const [todaySales, monthSales, totalProducts, lowStock, pendingTransfers, topProducts] = await Promise.all([
+      this.db.queryOne(
+        `SELECT COUNT(id)::int as count, COALESCE(SUM(total),0) as total
+         FROM sales WHERE status IN ('COMPLETED','PARTIALLY_REFUNDED')
+         AND created_at >= $1 ${branchFilter}`, [today]
+      ),
+      this.db.queryOne(
+        `SELECT COUNT(id)::int as count, COALESCE(SUM(total),0) as total
+         FROM sales WHERE status IN ('COMPLETED','PARTIALLY_REFUNDED')
+         AND created_at >= $1 ${branchFilter}`, [monthStart]
+      ),
+      this.db.queryOne<{ count: string }>('SELECT COUNT(*)::int as count FROM products WHERE is_active = true'),
+      this.db.queryOne<{ count: string }>(
+        `SELECT COUNT(*)::int as count FROM inventory i
+         JOIN products p ON i.product_id = p.id
+         WHERE p.is_active = true AND i.quantity <= p.min_stock_alert ${branchId ? `AND i.branch_id = '${branchId}'` : ''}`
+      ),
+      this.db.queryOne<{ count: string }>(
+        `SELECT COUNT(*)::int as count FROM transfers WHERE status IN ('PENDING','APPROVED')`
+      ),
+      this.db.queryMany(
+        `SELECT si.product_id, SUM(si.quantity)::int as qty_sold, SUM(si.total) as revenue
+         FROM sale_items si JOIN sales s ON si.sale_id = s.id
+         WHERE s.status IN ('COMPLETED','PARTIALLY_REFUNDED') AND s.created_at >= $1 ${branchFilter}
+         GROUP BY si.product_id ORDER BY qty_sold DESC LIMIT 5`, [monthStart]
+      ),
     ]);
 
-    const topProductDetails = await this.prisma.product.findMany({
-      where: { id: { in: topProducts.map(p => p.productId) } },
-      select: { id: true, name: true, nameAr: true, internalCode: true },
-    });
-
-    const topProductMap = new Map(topProductDetails.map(p => [p.id, p]));
+    const productIds = topProducts.map((p: any) => p.product_id);
+    const productDetails = productIds.length
+      ? await this.db.queryMany(`SELECT id, name, name_ar, internal_code FROM products WHERE id = ANY($1)`, [productIds])
+      : [];
+    const pdMap = new Map(productDetails.map((p: any) => [p.id, p]));
 
     return {
-      today: {
-        salesCount: todaySales._count.id,
-        salesTotal: Number(todaySales._sum.total ?? 0),
-      },
-      thisMonth: {
-        salesCount: monthSales._count.id,
-        salesTotal: Number(monthSales._sum.total ?? 0),
-      },
-      totalProducts,
-      lowStockCount: Number((lowStockCount[0] as any)?.count ?? 0),
-      pendingTransfers,
-      topProducts: topProducts.map(tp => ({
-        product: topProductMap.get(tp.productId),
-        quantitySold: Number(tp._sum.quantity ?? 0),
-        totalRevenue: Number(tp._sum.total ?? 0),
+      today: { salesCount: todaySales?.count ?? 0, salesTotal: Number(todaySales?.total ?? 0) },
+      thisMonth: { salesCount: monthSales?.count ?? 0, salesTotal: Number(monthSales?.total ?? 0) },
+      totalProducts: totalProducts?.count ?? 0,
+      lowStockCount: lowStock?.count ?? 0,
+      pendingTransfers: pendingTransfers?.count ?? 0,
+      topProducts: topProducts.map((tp: any) => ({
+        product: pdMap.get(tp.product_id),
+        quantitySold: tp.qty_sold,
+        totalRevenue: Number(tp.revenue),
       })),
     };
   }
 
-  async getSalesReport(params: {
-    branchId?: string;
-    dateFrom: string;
-    dateTo: string;
-    groupBy?: 'day' | 'week' | 'month';
-  }) {
+  async getSalesReport(params: { branchId?: string; dateFrom: string; dateTo: string; groupBy?: string }) {
     const { branchId, dateFrom, dateTo, groupBy = 'day' } = params;
-    const where: any = {
-      status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
-      createdAt: { gte: new Date(dateFrom), lte: new Date(dateTo) },
-    };
-    if (branchId) where.branchId = branchId;
+    const branchFilter = branchId ? `AND s.branch_id = '${branchId}'` : '';
+    const fmt = groupBy === 'month' ? 'YYYY-MM' : groupBy === 'week' ? 'IYYY-IW' : 'YYYY-MM-DD';
 
-    // Raw SQL for time-series grouping
-    const format = groupBy === 'month' ? 'YYYY-MM' : groupBy === 'week' ? 'IYYY-IW' : 'YYYY-MM-DD';
-    const pgFormat = groupBy === 'month' ? 'YYYY-MM' : groupBy === 'week' ? 'IYYY-IW' : 'YYYY-MM-DD';
+    const [summary, timeSeries, topProducts] = await Promise.all([
+      this.db.queryOne(
+        `SELECT COUNT(id)::int as count, COALESCE(SUM(total),0) as revenue,
+                COALESCE(SUM(discount_amount),0) as discount, COALESCE(SUM(tax_amount),0) as tax,
+                COALESCE(AVG(total),0) as avg_order
+         FROM sales WHERE status IN ('COMPLETED','PARTIALLY_REFUNDED')
+         AND created_at BETWEEN $1 AND $2 ${branchFilter}`,
+        [dateFrom, dateTo]
+      ),
+      this.db.queryMany(
+        `SELECT TO_CHAR(created_at, '${fmt}') as period,
+                COUNT(id)::int as sales_count, COALESCE(SUM(total),0) as total
+         FROM sales WHERE status IN ('COMPLETED','PARTIALLY_REFUNDED')
+         AND created_at BETWEEN $1 AND $2 ${branchFilter}
+         GROUP BY period ORDER BY period`,
+        [dateFrom, dateTo]
+      ),
+      this.db.queryMany(
+        `SELECT si.product_id, SUM(si.quantity)::int as qty, SUM(si.total) as revenue
+         FROM sale_items si JOIN sales s ON si.sale_id = s.id
+         WHERE s.status IN ('COMPLETED','PARTIALLY_REFUNDED')
+         AND s.created_at BETWEEN $1 AND $2 ${branchFilter}
+         GROUP BY si.product_id ORDER BY revenue DESC LIMIT 10`,
+        [dateFrom, dateTo]
+      ),
+    ]);
 
-    const timeSeries = await this.prisma.$queryRawUnsafe<any[]>(`
-      SELECT
-        TO_CHAR(created_at, '${pgFormat}') as period,
-        COUNT(id) as sales_count,
-        SUM(total) as total,
-        SUM(discount_amount) as discount_total,
-        SUM(tax_amount) as tax_total
-      FROM sales
-      WHERE status IN ('COMPLETED', 'PARTIALLY_REFUNDED')
-        AND created_at >= '${dateFrom}'
-        AND created_at <= '${dateTo}'
-        ${branchId ? `AND branch_id = '${branchId}'` : ''}
-      GROUP BY period
-      ORDER BY period ASC
-    `);
-
-    const summary = await this.prisma.sale.aggregate({
-      where,
-      _sum: { total: true, discountAmount: true, taxAmount: true },
-      _count: { id: true },
-      _avg: { total: true },
-    });
-
-    // Top products
-    const topProducts = await this.prisma.saleItem.groupBy({
-      by: ['productId'],
-      where: { sale: where },
-      _sum: { quantity: true, total: true },
-      orderBy: { _sum: { total: 'desc' } },
-      take: 10,
-    });
-
-    const productDetails = await this.prisma.product.findMany({
-      where: { id: { in: topProducts.map(p => p.productId) } },
-      select: { id: true, name: true, nameAr: true, internalCode: true, category: { select: { name: true } } },
-    });
-    const productMap = new Map(productDetails.map(p => [p.id, p]));
+    const productIds = topProducts.map((p: any) => p.product_id);
+    const productDetails = productIds.length
+      ? await this.db.queryMany(`SELECT id, name, name_ar, internal_code FROM products WHERE id = ANY($1)`, [productIds])
+      : [];
+    const pdMap = new Map(productDetails.map((p: any) => [p.id, p]));
 
     return {
       summary: {
-        salesCount: summary._count.id,
-        totalRevenue: Number(summary._sum.total ?? 0),
-        totalDiscount: Number(summary._sum.discountAmount ?? 0),
-        totalTax: Number(summary._sum.taxAmount ?? 0),
-        avgOrderValue: Number(summary._avg.total ?? 0),
+        salesCount: summary?.count ?? 0,
+        totalRevenue: Number(summary?.revenue ?? 0),
+        totalDiscount: Number(summary?.discount ?? 0),
+        totalTax: Number(summary?.tax ?? 0),
+        avgOrderValue: Number(summary?.avg_order ?? 0),
       },
-      timeSeries: timeSeries.map(row => ({
-        period: row.period,
-        salesCount: Number(row.sales_count),
-        total: Number(row.total),
-        discountTotal: Number(row.discount_total),
-        taxTotal: Number(row.tax_total),
+      timeSeries: timeSeries.map((r: any) => ({
+        period: r.period,
+        salesCount: r.sales_count,
+        total: Number(r.total),
       })),
-      topProducts: topProducts.map(tp => ({
-        product: productMap.get(tp.productId),
-        quantitySold: Number(tp._sum.quantity ?? 0),
-        totalRevenue: Number(tp._sum.total ?? 0),
+      topProducts: topProducts.map((tp: any) => ({
+        product: pdMap.get(tp.product_id),
+        quantitySold: tp.qty,
+        totalRevenue: Number(tp.revenue),
       })),
     };
   }
 
   async getProfitReport(params: { branchId?: string; dateFrom: string; dateTo: string }) {
     const { branchId, dateFrom, dateTo } = params;
+    const branchFilter = branchId ? `AND s.branch_id = '${branchId}'` : '';
 
-    const items = await this.prisma.saleItem.findMany({
-      where: {
-        sale: {
-          status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
-          createdAt: { gte: new Date(dateFrom), lte: new Date(dateTo) },
-          ...(branchId && { branchId }),
-        },
-      },
-      include: {
-        product: { select: { id: true, name: true, nameAr: true, purchasePrice: true } },
-      },
-    });
+    const items = await this.db.queryMany(
+      `SELECT si.product_id, si.quantity, si.total, si.cost_price, p.name, p.name_ar, p.purchase_price
+       FROM sale_items si
+       JOIN sales s ON si.sale_id = s.id
+       JOIN products p ON si.product_id = p.id
+       WHERE s.status IN ('COMPLETED','PARTIALLY_REFUNDED')
+       AND s.created_at BETWEEN $1 AND $2 ${branchFilter}`,
+      [dateFrom, dateTo]
+    );
 
-    let totalRevenue = 0;
-    let totalCost = 0;
-    const productProfits = new Map<string, any>();
+    let totalRevenue = 0, totalCost = 0;
+    const byProduct = new Map<string, any>();
 
-    for (const item of items) {
-      const revenue = Number(item.total);
-      const cost = (item.costPrice ? Number(item.costPrice) : Number(item.product.purchasePrice)) * item.quantity;
-      totalRevenue += revenue;
-      totalCost += cost;
-
-      if (!productProfits.has(item.productId)) {
-        productProfits.set(item.productId, {
-          product: item.product,
-          revenue: 0, cost: 0, profit: 0, quantity: 0,
-        });
+    for (const i of items) {
+      const rev = Number(i.total);
+      const cost = Number(i.cost_price ?? i.purchase_price) * Number(i.quantity);
+      totalRevenue += rev; totalCost += cost;
+      if (!byProduct.has(i.product_id)) {
+        byProduct.set(i.product_id, { product: { id: i.product_id, name: i.name, nameAr: i.name_ar }, revenue: 0, cost: 0, profit: 0, quantity: 0 });
       }
-      const pp = productProfits.get(item.productId);
-      pp.revenue += revenue;
-      pp.cost += cost;
-      pp.profit += revenue - cost;
-      pp.quantity += item.quantity;
+      const pp = byProduct.get(i.product_id);
+      pp.revenue += rev; pp.cost += cost; pp.profit += rev - cost; pp.quantity += Number(i.quantity);
     }
 
     const grossProfit = totalRevenue - totalCost;
-    const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-
     return {
       totalRevenue,
       totalCost,
       grossProfit,
-      marginPct: parseFloat(marginPct.toFixed(2)),
-      byProduct: Array.from(productProfits.values())
-        .sort((a, b) => b.profit - a.profit)
-        .slice(0, 20),
+      marginPct: totalRevenue > 0 ? parseFloat(((grossProfit / totalRevenue) * 100).toFixed(2)) : 0,
+      byProduct: Array.from(byProduct.values()).sort((a, b) => b.profit - a.profit).slice(0, 20),
     };
   }
 
-  async exportSalesExcel(params: { branchId?: string; dateFrom: string; dateTo: string }): Promise<Buffer> {
+  async exportSalesExcel(params: { branchId?: string; dateFrom: string; dateTo: string }): Promise<any> {
     const { branchId, dateFrom, dateTo } = params;
-    const sales = await this.prisma.sale.findMany({
-      where: {
-        status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
-        createdAt: { gte: new Date(dateFrom), lte: new Date(dateTo) },
-        ...(branchId && { branchId }),
-      },
-      include: {
-        cashier: { select: { fullName: true } },
-        customer: { select: { name: true } },
-        branch: { select: { name: true } },
-        items: { include: { product: { select: { name: true, internalCode: true } } } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const branchFilter = branchId ? `AND s.branch_id = '${branchId}'` : '';
+    const sales = await this.db.queryMany(
+      `SELECT s.invoice_number, s.created_at, s.subtotal, s.discount_amount, s.tax_amount,
+              s.total, s.payment_method, s.status,
+              u.full_name as cashier_name, b.name as branch_name
+       FROM sales s
+       JOIN users u ON s.cashier_id = u.id
+       JOIN branches b ON s.branch_id = b.id
+       WHERE s.status IN ('COMPLETED','PARTIALLY_REFUNDED')
+       AND s.created_at BETWEEN $1 AND $2 ${branchFilter}
+       ORDER BY s.created_at DESC`,
+      [dateFrom, dateTo]
+    );
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Sales Report');
-
-    sheet.columns = [
-      { header: 'Invoice #', key: 'invoice', width: 20 },
-      { header: 'Date', key: 'date', width: 18 },
-      { header: 'Branch', key: 'branch', width: 15 },
-      { header: 'Cashier', key: 'cashier', width: 20 },
-      { header: 'Customer', key: 'customer', width: 20 },
-      { header: 'Items', key: 'items', width: 8 },
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sales Report');
+    ws.columns = [
+      { header: 'Invoice #', key: 'invoice_number', width: 22 },
+      { header: 'Date', key: 'created_at', width: 20 },
+      { header: 'Branch', key: 'branch_name', width: 15 },
+      { header: 'Cashier', key: 'cashier_name', width: 20 },
       { header: 'Subtotal', key: 'subtotal', width: 12 },
-      { header: 'Discount', key: 'discount', width: 12 },
-      { header: 'Tax', key: 'tax', width: 10 },
+      { header: 'Discount', key: 'discount_amount', width: 12 },
+      { header: 'Tax', key: 'tax_amount', width: 10 },
       { header: 'Total', key: 'total', width: 12 },
-      { header: 'Payment', key: 'payment', width: 15 },
-      { header: 'Status', key: 'status', width: 15 },
+      { header: 'Payment', key: 'payment_method', width: 15 },
     ];
-
-    sheet.getRow(1).font = { bold: true };
-
-    sales.forEach(s => {
-      sheet.addRow({
-        invoice: s.invoiceNumber,
-        date: dayjs(s.createdAt).format('YYYY-MM-DD HH:mm'),
-        branch: s.branch.name,
-        cashier: s.cashier.fullName,
-        customer: s.customer?.name ?? '-',
-        items: s.items.length,
-        subtotal: Number(s.subtotal),
-        discount: Number(s.discountAmount),
-        tax: Number(s.taxAmount),
-        total: Number(s.total),
-        payment: s.paymentMethod,
-        status: s.status,
-      });
-    });
-
-    // Totals row
-    const lastRow = sheet.lastRow!.number + 1;
-    sheet.getCell(`G${lastRow}`).value = { formula: `SUM(G2:G${lastRow - 1})` };
-    sheet.getCell(`H${lastRow}`).value = { formula: `SUM(H2:H${lastRow - 1})` };
-    sheet.getCell(`J${lastRow}`).value = { formula: `SUM(J2:J${lastRow - 1})` };
-    sheet.getRow(lastRow).font = { bold: true };
-
-    return workbook.xlsx.writeBuffer() as Promise<Buffer>;
+    ws.getRow(1).font = { bold: true };
+    sales.forEach(s => ws.addRow({ ...s, created_at: dayjs(s.created_at).format('YYYY-MM-DD HH:mm') }));
+    return wb.xlsx.writeBuffer() as Promise<any>;
   }
 }

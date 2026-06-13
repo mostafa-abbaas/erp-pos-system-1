@@ -1,267 +1,249 @@
-import {
-  Injectable, NotFoundException, ConflictException, BadRequestException, Logger,
-} from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
-import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
-import { ProductQueryDto } from './dto/product-query.dto';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { DatabaseService } from '../../database/database.service';
 import * as ExcelJS from 'exceljs';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 
 @Injectable()
 export class ProductsService {
-  private readonly logger = new Logger(ProductsService.name);
+  constructor(private db: DatabaseService) {}
 
-  constructor(
-    private prisma: PrismaService,
-    private eventEmitter: EventEmitter2,
-  ) {}
-
-  async create(dto: CreateProductDto, userId: string) {
-    // Check uniqueness
-    if (dto.barcode) {
-      const existing = await this.prisma.product.findUnique({ where: { barcode: dto.barcode } });
-      if (existing) throw new ConflictException(`Barcode ${dto.barcode} already exists`);
-    }
-
-    const existing = await this.prisma.product.findUnique({ where: { internalCode: dto.internalCode } });
-    if (existing) throw new ConflictException(`Internal code ${dto.internalCode} already exists`);
-
-    const product = await this.prisma.product.create({
-      data: { ...dto, createdBy: userId },
-      include: this.productIncludes(),
-    });
-
-    this.eventEmitter.emit('product.created', product);
-    return product;
-  }
-
-  async findAll(query: ProductQueryDto) {
-    const {
-      search, categoryId, brandId, supplierId, isActive,
-      page = 1, limit = 20, sortBy = 'name', sortOrder = 'asc',
-    } = query;
-
-    const where: any = {};
+  async findAll(query: any) {
+    const { search, categoryId, brandId, supplierId, isActive, page = 1, limit = 20, sortBy = 'name', sortOrder = 'asc' } = query;
+    const conditions: string[] = ['1=1'];
+    const params: any[] = [];
+    let i = 1;
 
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { nameAr: { contains: search, mode: 'insensitive' } },
-        { internalCode: { contains: search, mode: 'insensitive' } },
-        { barcode: { contains: search, mode: 'insensitive' } },
-      ];
+      conditions.push(`(p.name ILIKE $${i} OR p.name_ar ILIKE $${i} OR p.internal_code ILIKE $${i} OR p.barcode ILIKE $${i})`);
+      params.push(`%${search}%`); i++;
     }
+    if (categoryId) { conditions.push(`p.category_id = $${i}`); params.push(categoryId); i++; }
+    if (brandId) { conditions.push(`p.brand_id = $${i}`); params.push(brandId); i++; }
+    if (supplierId) { conditions.push(`p.supplier_id = $${i}`); params.push(supplierId); i++; }
+    if (isActive !== undefined) { conditions.push(`p.is_active = $${i}`); params.push(isActive); i++; }
 
-    if (categoryId) where.categoryId = categoryId;
-    if (brandId) where.brandId = brandId;
-    if (supplierId) where.supplierId = supplierId;
-    if (isActive !== undefined) where.isActive = isActive;
+    const allowedSort = ['name', 'internal_code', 'selling_price', 'created_at'];
+    const safeSort = allowedSort.includes(sortBy) ? sortBy : 'name';
+    const safeOrder = sortOrder === 'desc' ? 'DESC' : 'ASC';
+    const offset = (page - 1) * limit;
 
-    const [items, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { [sortBy]: sortOrder },
-        include: this.productIncludes(),
-      }),
-      this.prisma.product.count({ where }),
-    ]);
+    const countResult = await this.db.queryOne<{ count: string }>(
+      `SELECT COUNT(*) FROM products p WHERE ${conditions.join(' AND ')}`, params
+    );
+    const total = parseInt(countResult?.count ?? '0');
 
-    return {
-      items,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    const items = await this.db.queryMany(
+      `SELECT p.*, 
+        json_build_object('id', c.id, 'name', c.name, 'nameAr', c.name_ar) as category,
+        json_build_object('id', b.id, 'name', b.name) as brand,
+        json_build_object('id', s.id, 'name', s.name, 'code', s.code) as supplier
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN brands b ON p.brand_id = b.id
+       LEFT JOIN suppliers s ON p.supplier_id = s.id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY p.${safeSort} ${safeOrder}
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, offset]
+    );
+
+    return { items, total, page: +page, limit: +limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findByBarcode(barcode: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { barcode },
-      include: this.productIncludes(),
-    });
+    const product = await this.db.queryOne(
+      `SELECT p.*,
+        json_build_object('id', c.id, 'name', c.name) as category,
+        json_build_object('id', b.id, 'name', b.name) as brand
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN brands b ON p.brand_id = b.id
+       WHERE p.barcode = $1`,
+      [barcode]
+    );
     if (!product) throw new NotFoundException(`Product with barcode ${barcode} not found`);
     return product;
   }
 
   async findOne(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
-      include: {
-        ...this.productIncludes(),
-        inventory: { include: { branch: { select: { id: true, code: true, name: true } } } },
-      },
-    });
+    const product = await this.db.queryOne(
+      `SELECT p.*,
+        json_build_object('id', c.id, 'name', c.name, 'nameAr', c.name_ar) as category,
+        json_build_object('id', b.id, 'name', b.name) as brand,
+        json_build_object('id', s.id, 'name', s.name) as supplier
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN brands b ON p.brand_id = b.id
+       LEFT JOIN suppliers s ON p.supplier_id = s.id
+       WHERE p.id = $1`,
+      [id]
+    );
     if (!product) throw new NotFoundException('Product not found');
     return product;
   }
 
-  async update(id: string, dto: UpdateProductDto, userId: string) {
-    const product = await this.findOne(id);
-
-    if (dto.barcode && dto.barcode !== product.barcode) {
-      const existing = await this.prisma.product.findUnique({ where: { barcode: dto.barcode } });
-      if (existing) throw new ConflictException(`Barcode ${dto.barcode} already exists`);
+  async create(dto: any, userId: string) {
+    if (dto.barcode) {
+      const exists = await this.db.queryOne('SELECT id FROM products WHERE barcode = $1', [dto.barcode]);
+      if (exists) throw new ConflictException(`Barcode ${dto.barcode} already exists`);
     }
+    const exists = await this.db.queryOne('SELECT id FROM products WHERE internal_code = $1', [dto.internalCode]);
+    if (exists) throw new ConflictException(`Internal code ${dto.internalCode} already exists`);
 
-    const updated = await this.prisma.product.update({
-      where: { id },
-      data: dto,
-      include: this.productIncludes(),
-    });
+    const result = await this.db.queryOne(
+      `INSERT INTO products (internal_code, barcode, name, name_ar, description, category_id, brand_id,
+        device_type_id, compatible_models, purchase_price, selling_price, min_selling_price,
+        tax_rate, supplier_id, min_stock_alert, notes, is_active, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,$17)
+       RETURNING *`,
+      [dto.internalCode, dto.barcode || null, dto.name, dto.nameAr || null, dto.description || null,
+       dto.categoryId || null, dto.brandId || null, dto.deviceTypeId || null,
+       dto.compatibleModels || [], dto.purchasePrice || 0, dto.sellingPrice || 0,
+       dto.minSellingPrice || null, dto.taxRate || 0, dto.supplierId || null,
+       dto.minStockAlert || 5, dto.notes || null, userId]
+    );
+    return result;
+  }
 
-    this.eventEmitter.emit('product.updated', { old: product, new: updated });
-    return updated;
+  async update(id: string, dto: any) {
+    await this.findOne(id);
+    const fields: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    const mapping: Record<string, string> = {
+      internalCode: 'internal_code', barcode: 'barcode', name: 'name', nameAr: 'name_ar',
+      description: 'description', categoryId: 'category_id', brandId: 'brand_id',
+      purchasePrice: 'purchase_price', sellingPrice: 'selling_price',
+      minSellingPrice: 'min_selling_price', taxRate: 'tax_rate', supplierId: 'supplier_id',
+      minStockAlert: 'min_stock_alert', notes: 'notes', isActive: 'is_active',
+    };
+
+    for (const [key, col] of Object.entries(mapping)) {
+      if (dto[key] !== undefined) { fields.push(`${col} = $${i}`); params.push(dto[key]); i++; }
+    }
+    if (fields.length === 0) return this.findOne(id);
+
+    params.push(id);
+    return this.db.queryOne(
+      `UPDATE products SET ${fields.join(', ')}, updated_at = NOW() WHERE id = $${i} RETURNING *`,
+      params
+    );
   }
 
   async remove(id: string) {
     await this.findOne(id);
-    // Soft delete
-    return this.prisma.product.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    return this.db.query('UPDATE products SET is_active = false, updated_at = NOW() WHERE id = $1', [id]);
+  }
+
+  async getLowStock(branchId?: string) {
+    const branchFilter = branchId ? 'AND i.branch_id = $1' : '';
+    const params = branchId ? [branchId] : [];
+    return this.db.queryMany(
+      `SELECT i.*, p.name, p.name_ar, p.internal_code, p.min_stock_alert,
+              json_build_object('id', b.id, 'code', b.code, 'name', b.name) as branch
+       FROM inventory i
+       JOIN products p ON i.product_id = p.id
+       JOIN branches b ON i.branch_id = b.id
+       WHERE p.is_active = true AND i.quantity <= p.min_stock_alert ${branchFilter}
+       ORDER BY i.quantity ASC`,
+      params
+    );
+  }
+
+  async getCategories() {
+    return this.db.queryMany('SELECT * FROM categories WHERE is_active = true ORDER BY name');
+  }
+
+  async getBrands() {
+    return this.db.queryMany('SELECT * FROM brands WHERE is_active = true ORDER BY name');
+  }
+
+  async getSuppliers() {
+    return this.db.queryMany('SELECT * FROM suppliers WHERE is_active = true ORDER BY name');
   }
 
   async importFromExcel(buffer: Buffer, userId: string) {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    await workbook.xlsx.load(buffer as any);
     const sheet = workbook.getWorksheet(1);
     if (!sheet) throw new BadRequestException('Empty Excel file');
 
-    const results = { success: 0, errors: [] as any[], skipped: 0 };
-    const rows: any[] = [];
+    const results = { success: 0, updated: 0, errors: [] as any[] };
 
-    sheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return; // Skip header
+    const rows: any[] = [];
+    sheet.eachRow((row, n) => {
+      if (n === 1) return;
       rows.push({
-        rowNumber,
-        internalCode: row.getCell(1).text?.trim(),
-        barcode: row.getCell(2).text?.trim() || null,
-        name: row.getCell(3).text?.trim(),
-        nameAr: row.getCell(4).text?.trim() || null,
-        categoryCode: row.getCell(5).text?.trim() || null,
-        purchasePrice: parseFloat(row.getCell(6).text) || 0,
-        sellingPrice: parseFloat(row.getCell(7).text) || 0,
-        minStockAlert: parseInt(row.getCell(8).text) || 5,
+        n,
+        internalCode: String(row.getCell(1).value || '').trim(),
+        barcode: String(row.getCell(2).value || '').trim() || null,
+        name: String(row.getCell(3).value || '').trim(),
+        nameAr: String(row.getCell(4).value || '').trim() || null,
+        categoryCode: String(row.getCell(5).value || '').trim() || null,
+        purchasePrice: parseFloat(String(row.getCell(6).value || '0')) || 0,
+        sellingPrice: parseFloat(String(row.getCell(7).value || '0')) || 0,
+        minStockAlert: parseInt(String(row.getCell(8).value || '5')) || 5,
       });
     });
 
     for (const row of rows) {
       try {
         if (!row.internalCode || !row.name) {
-          results.errors.push({ row: row.rowNumber, error: 'Internal code and name are required' });
+          results.errors.push({ row: row.n, error: 'Internal code and name are required' });
           continue;
         }
-
-        const existing = await this.prisma.product.findUnique({ where: { internalCode: row.internalCode } });
-
-        let categoryId: string | undefined;
+        let categoryId: string | null = null;
         if (row.categoryCode) {
-          const cat = await this.prisma.category.findUnique({ where: { code: row.categoryCode } });
-          categoryId = cat?.id;
+          const cat = await this.db.queryOne('SELECT id FROM categories WHERE code = $1', [row.categoryCode]);
+          categoryId = cat?.id || null;
         }
-
-        const data = {
-          internalCode: row.internalCode,
-          barcode: row.barcode || null,
-          name: row.name,
-          nameAr: row.nameAr,
-          categoryId,
-          purchasePrice: row.purchasePrice,
-          sellingPrice: row.sellingPrice,
-          minStockAlert: row.minStockAlert,
-          createdBy: userId,
-        };
-
+        const existing = await this.db.queryOne('SELECT id FROM products WHERE internal_code = $1', [row.internalCode]);
         if (existing) {
-          await this.prisma.product.update({ where: { id: existing.id }, data });
-          results.skipped++;
+          await this.db.query(
+            `UPDATE products SET name=$1, name_ar=$2, barcode=$3, category_id=$4, purchase_price=$5, selling_price=$6, min_stock_alert=$7, updated_at=NOW() WHERE id=$8`,
+            [row.name, row.nameAr, row.barcode, categoryId, row.purchasePrice, row.sellingPrice, row.minStockAlert, existing.id]
+          );
+          results.updated++;
         } else {
-          await this.prisma.product.create({ data });
+          await this.db.query(
+            `INSERT INTO products (internal_code, barcode, name, name_ar, category_id, purchase_price, selling_price, min_stock_alert, created_by, is_active)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)`,
+            [row.internalCode, row.barcode, row.name, row.nameAr, categoryId, row.purchasePrice, row.sellingPrice, row.minStockAlert, userId]
+          );
           results.success++;
         }
-      } catch (err) {
-        results.errors.push({ row: row.rowNumber, error: err.message });
+      } catch (e: any) {
+        results.errors.push({ row: row.n, error: e.message });
       }
     }
-
     return results;
   }
 
-  async exportToExcel(): Promise<Buffer> {
-    const products = await this.prisma.product.findMany({
-      where: { isActive: true },
-      include: { category: true, brand: true, supplier: true },
-      orderBy: { internalCode: 'asc' },
-    });
-
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Products');
-
-    sheet.columns = [
-      { header: 'Internal Code', key: 'internalCode', width: 20 },
-      { header: 'Barcode', key: 'barcode', width: 20 },
+  async exportToExcel(): Promise<any> {
+    const products = await this.db.queryMany(
+      `SELECT p.*, c.name as category_name, b.name as brand_name, s.name as supplier_name
+       FROM products p
+       LEFT JOIN categories c ON p.category_id = c.id
+       LEFT JOIN brands b ON p.brand_id = b.id
+       LEFT JOIN suppliers s ON p.supplier_id = s.id
+       WHERE p.is_active = true ORDER BY p.internal_code`
+    );
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Products');
+    ws.columns = [
+      { header: 'Internal Code', key: 'internal_code', width: 18 },
+      { header: 'Barcode', key: 'barcode', width: 18 },
       { header: 'Name', key: 'name', width: 30 },
-      { header: 'Name (Arabic)', key: 'nameAr', width: 30 },
-      { header: 'Category', key: 'category', width: 20 },
-      { header: 'Brand', key: 'brand', width: 15 },
-      { header: 'Purchase Price', key: 'purchasePrice', width: 15 },
-      { header: 'Selling Price', key: 'sellingPrice', width: 15 },
-      { header: 'Min Stock Alert', key: 'minStockAlert', width: 15 },
-      { header: 'Supplier', key: 'supplier', width: 20 },
+      { header: 'Name (Arabic)', key: 'name_ar', width: 30 },
+      { header: 'Category', key: 'category_name', width: 18 },
+      { header: 'Brand', key: 'brand_name', width: 15 },
+      { header: 'Purchase Price', key: 'purchase_price', width: 14 },
+      { header: 'Selling Price', key: 'selling_price', width: 14 },
+      { header: 'Min Stock Alert', key: 'min_stock_alert', width: 14 },
+      { header: 'Supplier', key: 'supplier_name', width: 20 },
     ];
-
-    // Style header row
-    sheet.getRow(1).font = { bold: true };
-    sheet.getRow(1).fill = {
-      type: 'pattern', pattern: 'solid',
-      fgColor: { argb: 'FF1E3A5F' },
-    };
-    sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-
-    products.forEach(p => {
-      sheet.addRow({
-        internalCode: p.internalCode,
-        barcode: p.barcode,
-        name: p.name,
-        nameAr: p.nameAr,
-        category: p.category?.name,
-        brand: p.brand?.name,
-        purchasePrice: Number(p.purchasePrice),
-        sellingPrice: Number(p.sellingPrice),
-        minStockAlert: p.minStockAlert,
-        supplier: p.supplier?.name,
-      });
-    });
-
-    return workbook.xlsx.writeBuffer() as Promise<Buffer>;
-  }
-
-  async getLowStockProducts(branchId?: string) {
-    const inventory = await this.prisma.inventory.findMany({
-      where: {
-        ...(branchId && { branchId }),
-        product: { isActive: true },
-      },
-      include: {
-        product: { include: { category: true, brand: true } },
-        branch: { select: { id: true, code: true, name: true } },
-      },
-    });
-
-    return inventory.filter(inv => inv.quantity <= inv.product.minStockAlert);
-  }
-
-  private productIncludes() {
-    return {
-      category: { select: { id: true, code: true, name: true, nameAr: true } },
-      brand: { select: { id: true, name: true, nameAr: true } },
-      deviceType: { select: { id: true, name: true, nameAr: true } },
-      supplier: { select: { id: true, code: true, name: true } },
-    };
+    ws.getRow(1).font = { bold: true };
+    products.forEach(p => ws.addRow(p));
+    return wb.xlsx.writeBuffer() as Promise<any>;
   }
 }

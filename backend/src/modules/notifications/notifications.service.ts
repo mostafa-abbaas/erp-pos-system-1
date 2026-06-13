@@ -1,38 +1,34 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
+import { DatabaseService } from '../../database/database.service';
 
 @Injectable()
 export class NotificationsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private db: DatabaseService) {}
 
   async getForUser(userId: string, branchId?: string, unreadOnly = false) {
-    return this.prisma.notification.findMany({
-      where: {
-        OR: [{ userId }, { branchId }],
-        ...(unreadOnly && { isRead: false }),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
+    const conditions = [`(user_id = $1 ${branchId ? `OR branch_id = '${branchId}'` : ''})`];
+    if (unreadOnly) conditions.push('is_read = false');
+    return this.db.queryMany(
+      `SELECT * FROM notifications WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT 50`, [userId]
+    );
   }
 
-  async markRead(id: string, userId: string) {
-    return this.prisma.notification.updateMany({
-      where: { id, OR: [{ userId }, {}] },
-      data: { isRead: true, readAt: new Date() },
-    });
+  async unreadCount(userId: string, branchId?: string) {
+    const branchFilter = branchId ? `OR branch_id = '${branchId}'` : '';
+    const r = await this.db.queryOne<{ count: string }>(
+      `SELECT COUNT(*)::int as count FROM notifications WHERE (user_id = $1 ${branchFilter}) AND is_read = false`, [userId]
+    );
+    return r?.count ?? 0;
+  }
+
+  async markRead(id: string) {
+    return this.db.query(`UPDATE notifications SET is_read = true, read_at = NOW() WHERE id = $1`, [id]);
   }
 
   async markAllRead(userId: string, branchId?: string) {
-    return this.prisma.notification.updateMany({
-      where: { OR: [{ userId }, ...(branchId ? [{ branchId }] : [])], isRead: false },
-      data: { isRead: true, readAt: new Date() },
-    });
-  }
-
-  async getUnreadCount(userId: string, branchId?: string) {
-    return this.prisma.notification.count({
-      where: { OR: [{ userId }, ...(branchId ? [{ branchId }] : [])], isRead: false },
-    });
+    const branchFilter = branchId ? `OR branch_id = '${branchId}'` : '';
+    return this.db.query(
+      `UPDATE notifications SET is_read = true, read_at = NOW() WHERE (user_id = $1 ${branchFilter}) AND is_read = false`, [userId]
+    );
   }
 }

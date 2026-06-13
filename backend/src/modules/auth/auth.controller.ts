@@ -1,15 +1,11 @@
-import {
-  Controller, Post, Get, Body, UseGuards, Req, Res, HttpCode, HttpStatus, Patch,
-} from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, Req, HttpCode, HttpStatus, Patch } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { LocalAuthGuard } from './guards/local-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { LoginDto } from './dto/login.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { ChangePasswordDto } from './dto/change-password.dto';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { LoginDto, RefreshTokenDto, ChangePasswordDto } from './dto';
+import { CurrentUser } from '../../common/decorators';
 import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('auth')
@@ -19,13 +15,11 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @ApiOperation({ summary: 'Login with username/password' })
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @UseGuards(LocalAuthGuard)
+  @ApiOperation({ summary: 'Login' })
   async login(@Req() req: Request, @Body() _dto: LoginDto) {
-    const ip = req.ip;
-    const userAgent = req.headers['user-agent'];
-    const tokens = await this.authService.login(req.user, ip, userAgent);
+    const tokens = await this.authService.login(req.user, req.ip, req.headers['user-agent']);
     return { success: true, data: tokens };
   }
 
@@ -41,16 +35,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Logout (revoke tokens)' })
   async logout(@CurrentUser() user: any, @Body() body: { refreshToken?: string }) {
     await this.authService.logout(user.id, body.refreshToken);
-    return { success: true, message: 'Logged out successfully' };
+    return { success: true, message: 'Logged out' };
   }
 
   @Get('profile')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current user profile' })
   async profile(@CurrentUser() user: any) {
     const data = await this.authService.getProfile(user.id);
     return { success: true, data };
@@ -59,9 +51,8 @@ export class AuthController {
   @Patch('change-password')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Change password' })
   async changePassword(@CurrentUser() user: any, @Body() dto: ChangePasswordDto) {
     await this.authService.changePassword(user.id, dto.currentPassword, dto.newPassword);
-    return { success: true, message: 'Password changed successfully' };
+    return { success: true, message: 'Password changed' };
   }
 }

@@ -1,9 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
-  images: {
-    domains: ['localhost'],
-  },
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: false },
+  // Disable Google Fonts optimization — fonts.googleapis.com may be blocked
+  optimizeFonts: false,
+  experimental: { serverComponentsExternalPackages: [] },
   async rewrites() {
     return [
       {

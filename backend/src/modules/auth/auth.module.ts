@@ -12,9 +12,9 @@ import { LocalStrategy } from './strategies/local.strategy';
     PassportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get('JWT_SECRET'),
-        signOptions: { expiresIn: config.get('JWT_EXPIRES_IN', '15m') },
+      useFactory: (cfg: ConfigService) => ({
+        secret: cfg.get('JWT_SECRET'),
+        signOptions: { expiresIn: cfg.get('JWT_EXPIRES_IN', '15m') },
       }),
     }),
   ],

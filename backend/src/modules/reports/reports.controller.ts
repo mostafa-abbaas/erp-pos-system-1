@@ -9,33 +9,30 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('v1/reports')
 export class ReportsController {
-  constructor(private reportsService: ReportsService) {}
+  constructor(private svc: ReportsService) {}
 
   @Get('dashboard')
   async dashboard(@Query('branchId') branchId?: string) {
-    const data = await this.reportsService.getDashboardStats(branchId);
-    return { success: true, data };
+    return { success: true, data: await this.svc.getDashboard(branchId) };
   }
 
   @Get('sales')
-  async sales(@Query() q: { branchId?: string; dateFrom: string; dateTo: string; groupBy?: 'day' | 'week' | 'month' }) {
-    const data = await this.reportsService.getSalesReport(q);
-    return { success: true, data };
+  async sales(@Query() q: any) {
+    return { success: true, data: await this.svc.getSalesReport(q) };
   }
 
   @Get('profit')
-  async profit(@Query() q: { branchId?: string; dateFrom: string; dateTo: string }) {
-    const data = await this.reportsService.getProfitReport(q);
-    return { success: true, data };
+  async profit(@Query() q: any) {
+    return { success: true, data: await this.svc.getProfitReport(q) };
   }
 
   @Get('sales/export')
-  async exportSales(@Query() q: { branchId?: string; dateFrom: string; dateTo: string }, @Res() res: Response) {
-    const buffer = await this.reportsService.exportSalesExcel(q);
+  async exportSales(@Query() q: any, @Res() res: Response) {
+    const buf = await this.svc.exportSalesExcel(q);
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="sales-report-${Date.now()}.xlsx"`,
+      'Content-Disposition': `attachment; filename="sales-${Date.now()}.xlsx"`,
     });
-    res.send(buffer);
+    res.send(buf);
   }
 }
