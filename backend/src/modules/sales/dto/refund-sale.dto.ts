@@ -1,7 +1,7 @@
 import { IsString, IsUUID, IsArray, IsEnum, ValidateNested, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod } from './create-sale.dto';
 
 export class RefundItemDto {
   @ApiProperty() @IsUUID() saleItemId: string;

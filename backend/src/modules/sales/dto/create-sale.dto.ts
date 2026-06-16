@@ -1,7 +1,14 @@
 import { IsString, IsUUID, IsArray, IsOptional, IsNumber, IsEnum, ValidateNested, Min, IsInt } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PaymentMethod } from '@prisma/client';
+
+export enum PaymentMethod {
+  CASH = 'CASH',
+  CARD = 'CARD',
+  BANK_TRANSFER = 'BANK_TRANSFER',
+  CREDIT = 'CREDIT',
+  MIXED = 'MIXED',
+}
 
 export class SaleItemDto {
   @ApiProperty() @IsUUID() productId: string;
