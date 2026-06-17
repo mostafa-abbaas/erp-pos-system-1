@@ -208,11 +208,11 @@ export class PurchasesService {
     return this.db.queryOne(`UPDATE suppliers SET ${fields.join(',')}, updated_at=NOW() WHERE id=$${i} RETURNING *`, params);
   }
 
-  async getPurchaseReport(params: any) {
-    const { branchId, supplierId, dateFrom, dateTo } = params;
-    const conditions: string[] = ["status != 'CANCELLED'"];
-    const qParams: any[] = [];
-    let i = 1;
+ async getPurchaseReport(params: any) {
+  const { branchId, supplierId, dateFrom, dateTo } = params;
+  const conditions: string[] = [];
+  const qParams: any[] = [];
+  let i = 1;
 
     if (branchId) { conditions.push(`p.branch_id=$${i}`); qParams.push(branchId); i++; }
     if (supplierId) { conditions.push(`p.supplier_id=$${i}`); qParams.push(supplierId); i++; }
