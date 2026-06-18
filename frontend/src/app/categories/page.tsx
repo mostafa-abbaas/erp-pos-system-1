@@ -64,6 +64,59 @@ function CategoryModal({ open, item, onClose, onSave }: any) {
   );
 }
 
+// Brands have no `code` field on the backend (brands table: name, name_ar, logo_url, is_active only).
+// This modal is intentionally separate from CategoryModal so it doesn't render or require a code input.
+function BrandModal({ open, item, onClose, onSave }: any) {
+  const isEdit = !!item;
+  const [name, setName] = useState(item?.name ?? '');
+  const [nameAr, setNameAr] = useState(item?.name_ar ?? '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    if (!name) { setError('الاسم مطلوب'); return; }
+    setLoading(true); setError('');
+    try { await onSave({ name, nameAr: nameAr || undefined }); }
+    catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-bold text-slate-800">{isEdit ? 'تعديل العلامة التجارية' : 'علامة تجارية جديدة'}</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">الاسم بالإنجليزية *</label>
+            <input value={name} onChange={e => setName(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="مثال: LG" autoFocus />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">الاسم بالعربية</label>
+            <input value={nameAr} onChange={e => setNameAr(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">{error}</p>}
+        </div>
+        <div className="flex gap-3 mt-5">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm">إلغاء</button>
+          <button onClick={handleSave} disabled={loading}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            حفظ
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function CategoriesPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'categories' | 'brands'>('categories');
@@ -160,15 +213,26 @@ export default function CategoriesPage() {
       </div>
 
       <CategoryModal
-        open={showCreate}
+        open={showCreate && tab === 'categories'}
         onClose={() => setShowCreate(false)}
-        onSave={tab === 'categories' ? handleCreateCategory : handleCreateBrand}
+        onSave={handleCreateCategory}
       />
       <CategoryModal
-        open={!!editItem}
+        open={!!editItem && tab === 'categories'}
         item={editItem}
         onClose={() => setEditItem(null)}
-        onSave={tab === 'categories' ? handleUpdateCategory : handleUpdateBrand}
+        onSave={handleUpdateCategory}
+      />
+      <BrandModal
+        open={showCreate && tab === 'brands'}
+        onClose={() => setShowCreate(false)}
+        onSave={handleCreateBrand}
+      />
+      <BrandModal
+        open={!!editItem && tab === 'brands'}
+        item={editItem}
+        onClose={() => setEditItem(null)}
+        onSave={handleUpdateBrand}
       />
     </AppLayout>
   );

@@ -2,14 +2,139 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { productsApi } from '@/lib/api';
+import { productsApi, categoriesApi } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import {
   Plus, Search, Upload, Download, Filter, Edit2, Trash2,
-  Package, AlertTriangle, CheckCircle, X, Loader2, Barcode,
+  Package, AlertTriangle, CheckCircle, X, Loader2, Barcode, Check,
 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { cn } from '@/lib/utils';
+
+function ProductModal({ open, item, onClose, onSave }: any) {
+  const isEdit = !!item;
+  const [internalCode, setInternalCode] = useState(item?.internalCode ?? '');
+  const [barcode, setBarcode] = useState(item?.barcode ?? '');
+  const [name, setName] = useState(item?.name ?? '');
+  const [nameAr, setNameAr] = useState(item?.nameAr ?? '');
+  const [categoryId, setCategoryId] = useState(item?.category?.id ?? '');
+  const [purchasePrice, setPurchasePrice] = useState(item?.purchasePrice ?? '');
+  const [sellingPrice, setSellingPrice] = useState(item?.sellingPrice ?? '');
+  const [minStockAlert, setMinStockAlert] = useState(item?.minStockAlert ?? '5');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const { data: categories } = useQuery({
+    queryKey: ['categories-for-product-modal'],
+    queryFn: () => productsApi.categories().then((r: any) => r.data),
+    enabled: open,
+  });
+
+  const handleSave = async () => {
+    if (!internalCode || !name) { setError('الكود والاسم مطلوبان'); return; }
+    setLoading(true); setError('');
+    try {
+      await onSave({
+        internalCode,
+        barcode: barcode || undefined,
+        name,
+        nameAr: nameAr || undefined,
+        categoryId: categoryId || undefined,
+        purchasePrice: parseFloat(purchasePrice) || 0,
+        sellingPrice: parseFloat(sellingPrice) || 0,
+        minStockAlert: parseInt(minStockAlert) || 5,
+      });
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b sticky top-0 bg-white">
+          <h3 className="text-lg font-bold text-slate-800">{isEdit ? 'تعديل المنتج' : 'منتج جديد'}</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1.5">الكود الداخلي *</label>
+              <input value={internalCode} onChange={e => setInternalCode(e.target.value.toUpperCase())}
+                disabled={isEdit}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="SP-021" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1.5">الباركود</label>
+              <input value={barcode} onChange={e => setBarcode(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="اختياري" />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1.5">الاسم بالإنجليزية *</label>
+            <input value={name} onChange={e => setName(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" autoFocus />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1.5">الاسم بالعربية</label>
+            <input value={nameAr} onChange={e => setNameAr(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1.5">الفئة</label>
+            <select value={categoryId} onChange={e => setCategoryId(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">بدون فئة</option>
+              {(categories || []).map((c: any) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1.5">سعر الشراء</label>
+              <input type="number" step="0.01" value={purchasePrice} onChange={e => setPurchasePrice(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1.5">سعر البيع</label>
+              <input type="number" step="0.01" value={sellingPrice} onChange={e => setSellingPrice(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="0.00" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1.5">حد التنبيه</label>
+              <input type="number" value={minStockAlert} onChange={e => setMinStockAlert(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 bg-red-50 text-red-600 text-sm rounded-xl px-4 py-3">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 p-6 pt-0">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 text-sm">إلغاء</button>
+          <button onClick={handleSave} disabled={loading}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl font-semibold flex items-center justify-center gap-2 text-sm">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            حفظ
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Badge({ children, color = 'default' }: { children: React.ReactNode; color?: string }) {
   const colors: Record<string, string> = {
@@ -32,6 +157,8 @@ export default function ProductsPage() {
   const [page, setPage] = useState(1);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editItem, setEditItem] = useState<any>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['products', search, page],
@@ -48,6 +175,18 @@ export default function ProductsPage() {
     mutationFn: (id: string) => productsApi.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['products'] }),
   });
+
+  const handleCreateProduct = async (form: any) => {
+    await productsApi.create(form);
+    qc.invalidateQueries({ queryKey: ['products'] });
+    setShowCreate(false);
+  };
+
+  const handleUpdateProduct = async (form: any) => {
+    await productsApi.update(editItem.id, form);
+    qc.invalidateQueries({ queryKey: ['products'] });
+    setEditItem(null);
+  };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -91,7 +230,10 @@ export default function ProductsPage() {
               استيراد Excel
               <input type="file" accept=".xlsx,.csv" onChange={handleImport} className="hidden" />
             </label>
-            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition text-sm font-medium">
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition text-sm font-medium"
+            >
               <Plus className="w-4 h-4" /> منتج جديد
             </button>
           </div>
@@ -199,7 +341,10 @@ export default function ProductsPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-1">
-                          <button className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition">
+                          <button
+                            onClick={() => setEditItem(p)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                          >
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
@@ -245,6 +390,18 @@ export default function ProductsPage() {
           )}
         </div>
       </div>
+
+      <ProductModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSave={handleCreateProduct}
+      />
+      <ProductModal
+        open={!!editItem}
+        item={editItem}
+        onClose={() => setEditItem(null)}
+        onSave={handleUpdateProduct}
+      />
     </AppLayout>
   );
 }

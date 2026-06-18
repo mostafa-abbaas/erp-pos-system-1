@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { purchasesApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { Plus, Search, Package, Truck, X, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+import { Plus, Search, Package, Truck, X, Loader2, CheckCircle, AlertCircle, Check, Edit2 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { cn } from '@/lib/utils';
 
@@ -239,12 +239,103 @@ function NewPurchaseModal({ open, onClose, branchId }: { open: boolean; onClose:
   );
 }
 
+// ─── Supplier Modal (create/edit) ──────────────────────────────────────────
+function SupplierModal({ open, item, onClose, onSave }: any) {
+  const isEdit = !!item;
+  const [code, setCode] = useState(item?.code ?? '');
+  const [name, setName] = useState(item?.name ?? '');
+  const [nameAr, setNameAr] = useState(item?.name_ar ?? '');
+  const [contact, setContact] = useState(item?.contact ?? '');
+  const [phone, setPhone] = useState(item?.phone ?? '');
+  const [email, setEmail] = useState(item?.email ?? '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    if (!code || !name) { setError('الكود والاسم مطلوبان'); return; }
+    setLoading(true); setError('');
+    try {
+      await onSave({
+        code, name,
+        nameAr: nameAr || undefined,
+        contact: contact || undefined,
+        phone: phone || undefined,
+        email: email || undefined,
+      });
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-bold text-slate-800">{isEdit ? 'تعديل المورد' : 'مورد جديد'}</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1">كود المورد *</label>
+              <input value={code} onChange={e => setCode(e.target.value.toUpperCase())}
+                disabled={isEdit}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="SUP-004" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1">الهاتف</label>
+              <input value={phone} onChange={e => setPhone(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">الاسم بالإنجليزية *</label>
+            <input value={name} onChange={e => setName(e.target.value)} autoFocus
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">الاسم بالعربية</label>
+            <input value={nameAr} onChange={e => setNameAr(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1">جهة الاتصال</label>
+              <input value={contact} onChange={e => setContact(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1">البريد الإلكتروني</label>
+              <input value={email} onChange={e => setEmail(e.target.value)} type="email"
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">{error}</p>}
+        </div>
+        <div className="flex gap-3 mt-5">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm">إلغاء</button>
+          <button onClick={handleSave} disabled={loading}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            حفظ
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────
 export default function PurchasesPage() {
   const { user } = useAuthStore();
+  const qc = useQueryClient();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [showSupplierNew, setShowSupplierNew] = useState(false);
+  const [editSupplier, setEditSupplier] = useState<any>(null);
   const branchId = user?.branchId || '';
 
   const { data, isLoading } = useQuery({
@@ -257,6 +348,20 @@ export default function PurchasesPage() {
     queryFn: () => purchasesApi.suppliers({ limit: 100 }).then((r: any) => r),
   });
 
+  const handleCreateSupplier = async (form: any) => {
+    await purchasesApi.createSupplier(form);
+    qc.invalidateQueries({ queryKey: ['suppliers-list-all'] });
+    qc.invalidateQueries({ queryKey: ['suppliers-list'] });
+    setShowSupplierNew(false);
+  };
+
+  const handleUpdateSupplier = async (form: any) => {
+    await purchasesApi.updateSupplier(editSupplier.id, form);
+    qc.invalidateQueries({ queryKey: ['suppliers-list-all'] });
+    qc.invalidateQueries({ queryKey: ['suppliers-list'] });
+    setEditSupplier(null);
+  };
+
   return (
     <AppLayout title="المشتريات">
       <div className="space-y-5" dir="rtl">
@@ -266,31 +371,44 @@ export default function PurchasesPage() {
             <h1 className="text-xl font-bold text-slate-800">فواتير المشتريات</h1>
             <p className="text-slate-500 text-sm">{data?.total ?? 0} فاتورة</p>
           </div>
-          <button
-            onClick={() => setShowNew(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition text-sm"
-          >
-            <Plus className="w-4 h-4" /> فاتورة جديدة
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSupplierNew(true)}
+              className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-medium transition text-sm"
+            >
+              <Truck className="w-4 h-4" /> مورد جديد
+            </button>
+            <button
+              onClick={() => setShowNew(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition text-sm"
+            >
+              <Plus className="w-4 h-4" /> فاتورة جديدة
+            </button>
+          </div>
         </div>
 
         {/* Suppliers summary cards */}
         {suppliersData?.items?.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {suppliersData.items.slice(0, 4).map((s: any) => (
-              <div key={s.id} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+              <button
+                key={s.id}
+                onClick={() => setEditSupplier(s)}
+                className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm text-right hover:border-blue-300 hover:shadow-md transition group relative"
+              >
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
                     <Truck className="w-4 h-4 text-blue-600" />
                   </div>
                   <span className="text-xs text-slate-400">{s.code}</span>
+                  <Edit2 className="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-500 transition mr-auto" />
                 </div>
                 <p className="font-semibold text-slate-800 text-sm truncate">{s.name}</p>
                 <p className="text-xs text-slate-500 mt-0.5">{s.purchase_count ?? 0} طلب</p>
                 {Number(s.balance) > 0 && (
                   <p className="text-xs text-red-500 font-medium">مديونية: {formatCurrency(Number(s.balance))}</p>
                 )}
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -350,6 +468,17 @@ export default function PurchasesPage() {
       </div>
 
       <NewPurchaseModal open={showNew} onClose={() => setShowNew(false)} branchId={branchId} />
+      <SupplierModal
+        open={showSupplierNew}
+        onClose={() => setShowSupplierNew(false)}
+        onSave={handleCreateSupplier}
+      />
+      <SupplierModal
+        open={!!editSupplier}
+        item={editSupplier}
+        onClose={() => setEditSupplier(null)}
+        onSave={handleUpdateSupplier}
+      />
     </AppLayout>
   );
 }
