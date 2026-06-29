@@ -13,14 +13,14 @@ import { cn } from '@/lib/utils';
 
 function ProductModal({ open, item, onClose, onSave }: any) {
   const isEdit = !!item;
-  const [internalCode, setInternalCode] = useState(item?.internalCode ?? '');
+  const [internalCode, setInternalCode] = useState(item?.internal_code ?? item?.internalCode ?? '');
   const [barcode, setBarcode] = useState(item?.barcode ?? '');
   const [name, setName] = useState(item?.name ?? '');
-  const [nameAr, setNameAr] = useState(item?.nameAr ?? '');
-  const [categoryId, setCategoryId] = useState(item?.category?.id ?? '');
-  const [purchasePrice, setPurchasePrice] = useState(item?.purchasePrice ?? '');
-  const [sellingPrice, setSellingPrice] = useState(item?.sellingPrice ?? '');
-  const [minStockAlert, setMinStockAlert] = useState(item?.minStockAlert ?? '5');
+  const [nameAr, setNameAr] = useState(item?.name_ar ?? item?.nameAr ?? '');
+  const [categoryId, setCategoryId] = useState(item?.category_id ?? item?.category?.id ?? '');
+  const [purchasePrice, setPurchasePrice] = useState(item?.purchase_price ?? item?.purchasePrice ?? '');
+  const [sellingPrice, setSellingPrice] = useState(item?.selling_price ?? item?.sellingPrice ?? '');
+  const [minStockAlert, setMinStockAlert] = useState(item?.min_stock_alert ?? item?.minStockAlert ?? '5');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -302,13 +302,13 @@ export default function ProductsPage() {
                     <tr key={p.id} className="hover:bg-slate-50 transition">
                       <td className="px-4 py-3">
                         <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded-lg">
-                          {p.internalCode}
+                          {p.internal_code}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         <div>
                           <p className="font-medium text-slate-800">{p.name}</p>
-                          {p.nameAr && <p className="text-xs text-slate-400">{p.nameAr}</p>}
+                          {p.name_ar && <p className="text-xs text-slate-400">{p.name_ar}</p>}
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -329,14 +329,14 @@ export default function ProductsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 font-medium text-slate-600">
-                        {formatCurrency(Number(p.purchasePrice))}
+                        {formatCurrency(Number(p.purchase_price))}
                       </td>
                       <td className="px-4 py-3 font-bold text-blue-600">
-                        {formatCurrency(Number(p.sellingPrice))}
+                        {formatCurrency(Number(p.selling_price))}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge color={p.isActive ? 'green' : 'red'}>
-                          {p.isActive ? 'نشط' : 'غير نشط'}
+                        <Badge color={p.is_active ? 'green' : 'red'}>
+                          {p.is_active ? 'نشط' : 'غير نشط'}
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
@@ -392,11 +392,13 @@ export default function ProductsPage() {
       </div>
 
       <ProductModal
+        key="create-product"
         open={showCreate}
         onClose={() => setShowCreate(false)}
         onSave={handleCreateProduct}
       />
       <ProductModal
+        key={editItem?.id ?? 'edit-product-empty'}
         open={!!editItem}
         item={editItem}
         onClose={() => setEditItem(null)}

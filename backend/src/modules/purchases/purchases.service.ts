@@ -69,6 +69,10 @@ export class PurchasesService {
   }
 
   async create(dto: any, userId: string) {
+    if (!dto.branchId) throw new BadRequestException('branchId is required to create a purchase');
+    if (!dto.supplierId) throw new BadRequestException('supplierId is required to create a purchase');
+    if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException('At least one item is required');
+
     const supplier = await this.db.queryOne('SELECT * FROM suppliers WHERE id = $1', [dto.supplierId]);
     if (!supplier) throw new NotFoundException('Supplier not found');
 

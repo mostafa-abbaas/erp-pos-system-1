@@ -469,11 +469,13 @@ export default function PurchasesPage() {
 
       <NewPurchaseModal open={showNew} onClose={() => setShowNew(false)} branchId={branchId} />
       <SupplierModal
+        key="create-supplier"
         open={showSupplierNew}
         onClose={() => setShowSupplierNew(false)}
         onSave={handleCreateSupplier}
       />
       <SupplierModal
+        key={editSupplier?.id ?? 'edit-supplier-empty'}
         open={!!editSupplier}
         item={editSupplier}
         onClose={() => setEditSupplier(null)}

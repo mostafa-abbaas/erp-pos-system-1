@@ -213,22 +213,26 @@ export default function CategoriesPage() {
       </div>
 
       <CategoryModal
+        key="create-category"
         open={showCreate && tab === 'categories'}
         onClose={() => setShowCreate(false)}
         onSave={handleCreateCategory}
       />
       <CategoryModal
+        key={editItem?.id ?? 'edit-category-empty'}
         open={!!editItem && tab === 'categories'}
         item={editItem}
         onClose={() => setEditItem(null)}
         onSave={handleUpdateCategory}
       />
       <BrandModal
+        key="create-brand"
         open={showCreate && tab === 'brands'}
         onClose={() => setShowCreate(false)}
         onSave={handleCreateBrand}
       />
       <BrandModal
+        key={editItem?.id ?? 'edit-brand-empty'}
         open={!!editItem && tab === 'brands'}
         item={editItem}
         onClose={() => setEditItem(null)}

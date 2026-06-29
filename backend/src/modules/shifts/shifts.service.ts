@@ -6,6 +6,8 @@ export class ShiftsService {
   constructor(private db: DatabaseService) {}
 
   async openShift(dto: any, userId: string) {
+    if (!dto.branchId) throw new BadRequestException('branchId is required to open a shift');
+
     // Check no open shift exists for this cashier
     const existing = await this.db.queryOne(
       `SELECT id FROM shifts WHERE cashier_id = $1 AND closed_at IS NULL`, [userId]

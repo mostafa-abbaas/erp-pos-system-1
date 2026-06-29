@@ -68,7 +68,16 @@ export const useAuthStore = create<AuthState>()(
       loadProfile: async () => {
         try {
           const res = await authApi.profile();
-          set({ user: (res as any).data });
+          const raw: any = (res as any).data;
+          set({
+            user: {
+              ...raw,
+              fullName: raw.fullName ?? raw.full_name,
+              fullNameAr: raw.fullNameAr ?? raw.full_name_ar,
+              branchId: raw.branchId ?? raw.branch_id,
+              avatarUrl: raw.avatarUrl ?? raw.avatar_url,
+            },
+          });
         } catch {
           set({ user: null, isAuthenticated: false });
         }

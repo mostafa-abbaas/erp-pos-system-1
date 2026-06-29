@@ -1,0 +1,173 @@
+diff --git a/backend/src/modules/purchases/purchases.service.ts b/backend/src/modules/purchases/purchases.service.ts
+index 8ad96f1..cb56387 100644
+--- a/backend/src/modules/purchases/purchases.service.ts
++++ b/backend/src/modules/purchases/purchases.service.ts
+@@ -69,6 +69,10 @@ export class PurchasesService {
+   }
+ 
+   async create(dto: any, userId: string) {
++    if (!dto.branchId) throw new BadRequestException('branchId is required to create a purchase');
++    if (!dto.supplierId) throw new BadRequestException('supplierId is required to create a purchase');
++    if (!Array.isArray(dto.items) || dto.items.length === 0) throw new BadRequestException('At least one item is required');
++
+     const supplier = await this.db.queryOne('SELECT * FROM suppliers WHERE id = $1', [dto.supplierId]);
+     if (!supplier) throw new NotFoundException('Supplier not found');
+ 
+diff --git a/backend/src/modules/shifts/shifts.service.ts b/backend/src/modules/shifts/shifts.service.ts
+index 360680e..a4a59fc 100644
+--- a/backend/src/modules/shifts/shifts.service.ts
++++ b/backend/src/modules/shifts/shifts.service.ts
+@@ -6,6 +6,8 @@ export class ShiftsService {
+   constructor(private db: DatabaseService) {}
+ 
+   async openShift(dto: any, userId: string) {
++    if (!dto.branchId) throw new BadRequestException('branchId is required to open a shift');
++
+     // Check no open shift exists for this cashier
+     const existing = await this.db.queryOne(
+       `SELECT id FROM shifts WHERE cashier_id = $1 AND closed_at IS NULL`, [userId]
+diff --git a/frontend/src/app/categories/page.tsx b/frontend/src/app/categories/page.tsx
+index 5b94627..1548c0c 100644
+--- a/frontend/src/app/categories/page.tsx
++++ b/frontend/src/app/categories/page.tsx
+@@ -213,22 +213,26 @@ export default function CategoriesPage() {
+       </div>
+ 
+       <CategoryModal
++        key="create-category"
+         open={showCreate && tab === 'categories'}
+         onClose={() => setShowCreate(false)}
+         onSave={handleCreateCategory}
+       />
+       <CategoryModal
++        key={editItem?.id ?? 'edit-category-empty'}
+         open={!!editItem && tab === 'categories'}
+         item={editItem}
+         onClose={() => setEditItem(null)}
+         onSave={handleUpdateCategory}
+       />
+       <BrandModal
++        key="create-brand"
+         open={showCreate && tab === 'brands'}
+         onClose={() => setShowCreate(false)}
+         onSave={handleCreateBrand}
+       />
+       <BrandModal
++        key={editItem?.id ?? 'edit-brand-empty'}
+         open={!!editItem && tab === 'brands'}
+         item={editItem}
+         onClose={() => setEditItem(null)}
+diff --git a/frontend/src/app/products/page.tsx b/frontend/src/app/products/page.tsx
+index fc12389..a4f5247 100644
+--- a/frontend/src/app/products/page.tsx
++++ b/frontend/src/app/products/page.tsx
+@@ -13,14 +13,14 @@ import { cn } from '@/lib/utils';
+ 
+ function ProductModal({ open, item, onClose, onSave }: any) {
+   const isEdit = !!item;
+-  const [internalCode, setInternalCode] = useState(item?.internalCode ?? '');
++  const [internalCode, setInternalCode] = useState(item?.internal_code ?? item?.internalCode ?? '');
+   const [barcode, setBarcode] = useState(item?.barcode ?? '');
+   const [name, setName] = useState(item?.name ?? '');
+-  const [nameAr, setNameAr] = useState(item?.nameAr ?? '');
+-  const [categoryId, setCategoryId] = useState(item?.category?.id ?? '');
+-  const [purchasePrice, setPurchasePrice] = useState(item?.purchasePrice ?? '');
+-  const [sellingPrice, setSellingPrice] = useState(item?.sellingPrice ?? '');
+-  const [minStockAlert, setMinStockAlert] = useState(item?.minStockAlert ?? '5');
++  const [nameAr, setNameAr] = useState(item?.name_ar ?? item?.nameAr ?? '');
++  const [categoryId, setCategoryId] = useState(item?.category_id ?? item?.category?.id ?? '');
++  const [purchasePrice, setPurchasePrice] = useState(item?.purchase_price ?? item?.purchasePrice ?? '');
++  const [sellingPrice, setSellingPrice] = useState(item?.selling_price ?? item?.sellingPrice ?? '');
++  const [minStockAlert, setMinStockAlert] = useState(item?.min_stock_alert ?? item?.minStockAlert ?? '5');
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState('');
+ 
+@@ -302,13 +302,13 @@ export default function ProductsPage() {
+                     <tr key={p.id} className="hover:bg-slate-50 transition">
+                       <td className="px-4 py-3">
+                         <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded-lg">
+-                          {p.internalCode}
++                          {p.internal_code}
+                         </span>
+                       </td>
+                       <td className="px-4 py-3">
+                         <div>
+                           <p className="font-medium text-slate-800">{p.name}</p>
+-                          {p.nameAr && <p className="text-xs text-slate-400">{p.nameAr}</p>}
++                          {p.name_ar && <p className="text-xs text-slate-400">{p.name_ar}</p>}
+                         </div>
+                       </td>
+                       <td className="px-4 py-3">
+@@ -329,14 +329,14 @@ export default function ProductsPage() {
+                         )}
+                       </td>
+                       <td className="px-4 py-3 font-medium text-slate-600">
+-                        {formatCurrency(Number(p.purchasePrice))}
++                        {formatCurrency(Number(p.purchase_price))}
+                       </td>
+                       <td className="px-4 py-3 font-bold text-blue-600">
+-                        {formatCurrency(Number(p.sellingPrice))}
++                        {formatCurrency(Number(p.selling_price))}
+                       </td>
+                       <td className="px-4 py-3">
+-                        <Badge color={p.isActive ? 'green' : 'red'}>
+-                          {p.isActive ? 'نشط' : 'غير نشط'}
++                        <Badge color={p.is_active ? 'green' : 'red'}>
++                          {p.is_active ? 'نشط' : 'غير نشط'}
+                         </Badge>
+                       </td>
+                       <td className="px-4 py-3">
+@@ -392,11 +392,13 @@ export default function ProductsPage() {
+       </div>
+ 
+       <ProductModal
++        key="create-product"
+         open={showCreate}
+         onClose={() => setShowCreate(false)}
+         onSave={handleCreateProduct}
+       />
+       <ProductModal
++        key={editItem?.id ?? 'edit-product-empty'}
+         open={!!editItem}
+         item={editItem}
+         onClose={() => setEditItem(null)}
+diff --git a/frontend/src/app/purchases/page.tsx b/frontend/src/app/purchases/page.tsx
+index d122021..c5c15ee 100644
+--- a/frontend/src/app/purchases/page.tsx
++++ b/frontend/src/app/purchases/page.tsx
+@@ -469,11 +469,13 @@ export default function PurchasesPage() {
+ 
+       <NewPurchaseModal open={showNew} onClose={() => setShowNew(false)} branchId={branchId} />
+       <SupplierModal
++        key="create-supplier"
+         open={showSupplierNew}
+         onClose={() => setShowSupplierNew(false)}
+         onSave={handleCreateSupplier}
+       />
+       <SupplierModal
++        key={editSupplier?.id ?? 'edit-supplier-empty'}
+         open={!!editSupplier}
+         item={editSupplier}
+         onClose={() => setEditSupplier(null)}
+diff --git a/frontend/src/store/auth.store.ts b/frontend/src/store/auth.store.ts
+index a1884ab..f5a5b05 100644
+--- a/frontend/src/store/auth.store.ts
++++ b/frontend/src/store/auth.store.ts
+@@ -68,7 +68,16 @@ export const useAuthStore = create<AuthState>()(
+       loadProfile: async () => {
+         try {
+           const res = await authApi.profile();
+-          set({ user: (res as any).data });
++          const raw: any = (res as any).data;
++          set({
++            user: {
++              ...raw,
++              fullName: raw.fullName ?? raw.full_name,
++              fullNameAr: raw.fullNameAr ?? raw.full_name_ar,
++              branchId: raw.branchId ?? raw.branch_id,
++              avatarUrl: raw.avatarUrl ?? raw.avatar_url,
++            },
++          });
+         } catch {
+           set({ user: null, isAuthenticated: false });
+         }
