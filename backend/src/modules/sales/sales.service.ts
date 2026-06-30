@@ -224,7 +224,18 @@ export class SalesService {
         );
       }
 
-      await client.query(`UPDATE sales SET status = 'REFUNDED', updated_at = NOW() WHERE id = $1`, [id]);
+      const totalsRow = await client.query(
+        `SELECT
+           COALESCE((SELECT SUM(quantity) FROM sale_items WHERE sale_id = $1), 0) AS sold_qty,
+           COALESCE((SELECT SUM(ri.quantity) FROM refund_items ri
+                     JOIN refunds r ON ri.refund_id = r.id
+                     WHERE r.sale_id = $1), 0) AS refunded_qty`,
+        [id]
+      );
+      const { sold_qty: soldQty, refunded_qty: refundedQty } = totalsRow.rows[0];
+      const newStatus = Number(refundedQty) >= Number(soldQty) ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+
+      await client.query(`UPDATE sales SET status = $1, updated_at = NOW() WHERE id = $2`, [newStatus, id]);
       return refund;
     });
   }
