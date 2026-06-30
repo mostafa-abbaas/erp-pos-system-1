@@ -4,10 +4,109 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { shiftsApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, PAYMENT_METHOD_LABELS } from '@/lib/utils';
 import { Clock, DollarSign, CheckCircle, Plus, Lock, Unlock, X, Loader2, BarChart2 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { cn } from '@/lib/utils';
+
+// ─── Shift Report Modal ─────────────────────────────────────────────────────
+function ShiftReportModal({ open, shiftId, onClose }: { open: boolean; shiftId: string | null; onClose: () => void }) {
+  const { data: report, isLoading } = useQuery({
+    queryKey: ['shift-report', shiftId],
+    queryFn: () => shiftsApi.report(shiftId as string).then((r: any) => r.data),
+    enabled: open && !!shiftId,
+  });
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b sticky top-0 bg-white">
+          <h3 className="text-lg font-bold text-slate-800">تقرير الوردية</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+
+        {isLoading ? (
+          <div className="text-center py-12"><Loader2 className="w-7 h-7 animate-spin mx-auto text-blue-400" /></div>
+        ) : !report ? (
+          <div className="text-center py-12 text-slate-400">تعذر تحميل التقرير</div>
+        ) : (
+          <div className="p-6 space-y-5">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="bg-slate-50 rounded-xl p-3">
+                <p className="text-slate-400 text-xs mb-1">الكاشير</p>
+                <p className="font-medium text-slate-700">{report.shift.cashier_name}</p>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-3">
+                <p className="text-slate-400 text-xs mb-1">الفرع</p>
+                <p className="font-medium text-slate-700">{report.shift.branch_name}</p>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-bold text-slate-700 mb-2">المبيعات حسب طريقة الدفع</h4>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-right px-4 py-2 text-slate-500 font-medium">طريقة الدفع</th>
+                      <th className="text-center px-4 py-2 text-slate-500 font-medium">العدد</th>
+                      <th className="text-center px-4 py-2 text-slate-500 font-medium">الإجمالي</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {(report.salesByPayment || []).map((p: any) => (
+                      <tr key={p.payment_method}>
+                        <td className="px-4 py-2 font-medium text-slate-800">{PAYMENT_METHOD_LABELS[p.payment_method] || p.payment_method}</td>
+                        <td className="px-4 py-2 text-center text-slate-500">{p.count}</td>
+                        <td className="px-4 py-2 text-center font-bold text-slate-700">{formatCurrency(Number(p.total))}</td>
+                      </tr>
+                    ))}
+                    {(!report.salesByPayment || report.salesByPayment.length === 0) && (
+                      <tr><td colSpan={3} className="text-center py-6 text-slate-400">لا توجد مبيعات</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-sm font-bold text-slate-700 mb-2">الأكثر مبيعاً</h4>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-right px-4 py-2 text-slate-500 font-medium">المنتج</th>
+                      <th className="text-center px-4 py-2 text-slate-500 font-medium">الكمية</th>
+                      <th className="text-center px-4 py-2 text-slate-500 font-medium">الإيراد</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {(report.topProducts || []).map((p: any) => (
+                      <tr key={p.internal_code}>
+                        <td className="px-4 py-2 font-medium text-slate-800">{p.name}</td>
+                        <td className="px-4 py-2 text-center text-slate-500">{p.qty}</td>
+                        <td className="px-4 py-2 text-center font-bold text-slate-700">{formatCurrency(Number(p.revenue))}</td>
+                      </tr>
+                    ))}
+                    {(!report.topProducts || report.topProducts.length === 0) && (
+                      <tr><td colSpan={3} className="text-center py-6 text-slate-400">لا توجد بيانات</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="p-6 pt-0">
+          <button onClick={onClose} className="w-full py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ActiveShiftCard({ shift, branchId, onClose }: { shift: any; branchId: string; onClose: () => void }) {
   const [closingBalance, setClosingBalance] = useState('');
@@ -130,6 +229,7 @@ export default function ShiftsPage() {
   const qc = useQueryClient();
   const { user } = useAuthStore();
   const [showOpen, setShowOpen] = useState(false);
+  const [reportShiftId, setReportShiftId] = useState<string | null>(null);
   const [openingBalance, setOpeningBalance] = useState('');
   const [openingLoading, setOpeningLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -203,6 +303,7 @@ export default function ShiftsPage() {
                   <th className="text-center px-4 py-3">الفواتير</th>
                   <th className="text-right px-4 py-3">إجمالي المبيعات</th>
                   <th className="text-center px-4 py-3">الحالة</th>
+                  <th className="text-center px-4 py-3">إجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -223,6 +324,15 @@ export default function ShiftsPage() {
                           s.closed_at ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700')}>
                           {s.closed_at ? 'مغلقة' : 'مفتوحة'}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          onClick={() => setReportShiftId(s.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                          title="عرض التقرير"
+                        >
+                          <BarChart2 className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -252,6 +362,8 @@ export default function ShiftsPage() {
           </div>
         </div>
       )}
+
+      <ShiftReportModal open={!!reportShiftId} shiftId={reportShiftId} onClose={() => setReportShiftId(null)} />
     </AppLayout>
   );
 }

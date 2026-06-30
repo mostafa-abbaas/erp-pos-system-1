@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { purchasesApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { Plus, Search, Package, Truck, X, Loader2, CheckCircle, AlertCircle, Check, Edit2 } from 'lucide-react';
+import { Plus, Search, Package, Truck, X, Loader2, CheckCircle, AlertCircle, Check, Edit2, BarChart3 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { cn } from '@/lib/utils';
 
@@ -327,6 +327,126 @@ function SupplierModal({ open, item, onClose, onSave }: any) {
   );
 }
 
+// ─── Purchase Report Modal ──────────────────────────────────────────────────
+function PurchaseReportModal({ open, onClose, branchId }: any) {
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [supplierId, setSupplierId] = useState('');
+
+  const { data: suppliersData } = useQuery({
+    queryKey: ['suppliers-list-report'],
+    queryFn: () => purchasesApi.suppliers({ limit: 100 }).then((r: any) => r.items),
+    enabled: open,
+  });
+
+  const { data: report, isLoading } = useQuery({
+    queryKey: ['purchase-report', branchId, dateFrom, dateTo, supplierId],
+    queryFn: () => purchasesApi.report({
+      branchId: branchId || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      supplierId: supplierId || undefined,
+    }).then((r: any) => r.data),
+    enabled: open,
+  });
+
+  if (!open) return null;
+
+  const summary = report?.summary;
+  const bySupplier = report?.bySupplier || [];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b sticky top-0 bg-white">
+          <h3 className="text-lg font-bold text-slate-800">تقرير المشتريات</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">من تاريخ</label>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">إلى تاريخ</label>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 block mb-1">المورد</label>
+              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">كل الموردين</option>
+                {(suppliersData || []).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {isLoading ? (
+            <div className="text-center py-10"><Loader2 className="w-7 h-7 animate-spin mx-auto text-blue-400" /></div>
+          ) : (
+            <>
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: 'عدد الفواتير', value: summary?.count ?? 0, color: 'text-slate-700' },
+                  { label: 'الإجمالي', value: formatCurrency(Number(summary?.total ?? 0)), color: 'text-blue-600' },
+                  { label: 'المدفوع', value: formatCurrency(Number(summary?.paid ?? 0)), color: 'text-green-600' },
+                  { label: 'المتبقي', value: formatCurrency(Number(summary?.outstanding ?? 0)), color: 'text-red-500' },
+                ].map((item) => (
+                  <div key={item.label} className="bg-slate-50 rounded-xl p-3 text-center">
+                    <p className={cn('text-base font-bold', item.color)}>{item.value}</p>
+                    <p className="text-xs text-slate-500 mt-1">{item.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-bold text-slate-700 mb-2">حسب المورد</h4>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="text-right px-4 py-2 text-slate-500 font-medium">المورد</th>
+                        <th className="text-center px-4 py-2 text-slate-500 font-medium">الطلبات</th>
+                        <th className="text-center px-4 py-2 text-slate-500 font-medium">الإجمالي</th>
+                        <th className="text-center px-4 py-2 text-slate-500 font-medium">المديونية</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {bySupplier.map((s: any) => (
+                        <tr key={s.code}>
+                          <td className="px-4 py-2 font-medium text-slate-800">{s.name}</td>
+                          <td className="px-4 py-2 text-center text-slate-500">{s.orders}</td>
+                          <td className="px-4 py-2 text-center font-bold text-slate-700">{formatCurrency(Number(s.total))}</td>
+                          <td className="px-4 py-2 text-center">
+                            {Number(s.balance) > 0
+                              ? <span className="text-red-500 font-medium">{formatCurrency(Number(s.balance))}</span>
+                              : <span className="text-green-500 text-xs">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                      {bySupplier.length === 0 && (
+                        <tr><td colSpan={4} className="text-center py-6 text-slate-400">لا توجد بيانات</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="p-6 pt-0">
+          <button onClick={onClose} className="w-full py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────
 export default function PurchasesPage() {
   const { user } = useAuthStore();
@@ -334,6 +454,7 @@ export default function PurchasesPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [showSupplierNew, setShowSupplierNew] = useState(false);
   const [editSupplier, setEditSupplier] = useState<any>(null);
   const branchId = user?.branchId || '';
@@ -372,6 +493,12 @@ export default function PurchasesPage() {
             <p className="text-slate-500 text-sm">{data?.total ?? 0} فاتورة</p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowReport(true)}
+              className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-medium transition text-sm"
+            >
+              <BarChart3 className="w-4 h-4" /> تقرير المشتريات
+            </button>
             <button
               onClick={() => setShowSupplierNew(true)}
               className="flex items-center gap-2 px-4 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-medium transition text-sm"
@@ -468,6 +595,7 @@ export default function PurchasesPage() {
       </div>
 
       <NewPurchaseModal open={showNew} onClose={() => setShowNew(false)} branchId={branchId} />
+      <PurchaseReportModal open={showReport} onClose={() => setShowReport(false)} branchId={branchId} />
       <SupplierModal
         key="create-supplier"
         open={showSupplierNew}

@@ -6,7 +6,7 @@ import { useAuthStore } from '@/store/auth.store';
 import {
   LayoutDashboard, ShoppingCart, Package, Warehouse, BarChart3,
   Users, Settings, LogOut, Truck, ArrowLeftRight, ChevronLeft,
-  Clock, Tag, ShoppingBag,
+  Clock, Tag, ShoppingBag, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
@@ -18,6 +18,7 @@ const NAV = [
     items: [
       { href: '/', label: 'لوحة التحكم', icon: LayoutDashboard, roles: ['ADMIN','CASHIER','WAREHOUSE','BRANCH_MANAGER'] },
       { href: '/pos', label: 'نقطة البيع', icon: ShoppingCart, roles: ['ADMIN','CASHIER','BRANCH_MANAGER'] },
+      { href: '/sales', label: 'سجل المبيعات', icon: Receipt, roles: ['ADMIN','CASHIER','BRANCH_MANAGER'] },
       { href: '/shifts', label: 'الورديات', icon: Clock, roles: ['ADMIN','CASHIER','BRANCH_MANAGER'] },
     ],
   },

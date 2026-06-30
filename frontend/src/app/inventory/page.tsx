@@ -1,20 +1,227 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { inventoryApi } from '@/lib/api';
-import { formatNumber } from '@/lib/utils';
-import { Warehouse, AlertTriangle, Search, History } from 'lucide-react';
+import { formatNumber, formatCurrency } from '@/lib/utils';
+import { Warehouse, AlertTriangle, Search, History, SlidersHorizontal, ClipboardCheck, X, Loader2, CheckCircle } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { useAuthStore } from '@/store/auth.store';
 import { cn } from '@/lib/utils';
 
+// ─── Manual Adjustment Modal ────────────────────────────────────────────────
+function AdjustmentModal({ open, inv, onClose, onSuccess }: any) {
+  const [delta, setDelta] = useState('');
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!open || !inv) return null;
+
+  const parsedDelta = parseInt(delta) || 0;
+  const newQty = inv.quantity + parsedDelta;
+
+  const handleSubmit = async () => {
+    if (!delta || parsedDelta === 0) { setError('يرجى إدخال كمية تعديل غير صفرية'); return; }
+    if (newQty < 0) { setError('لا يمكن أن تقل الكمية عن صفر'); return; }
+    setLoading(true); setError('');
+    try {
+      await inventoryApi.adjust({
+        productId: inv.product.id,
+        branchId: inv.branch.id,
+        quantity: parsedDelta,
+        notes: notes || undefined,
+      });
+      onSuccess();
+    } catch (e: any) {
+      setError(e.message || 'فشل تنفيذ التسوية');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-bold text-slate-800">تسوية يدوية للمخزون</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+
+        <p className="text-sm text-slate-500 mb-4">{inv.product.name}</p>
+
+        <div className="bg-slate-50 rounded-xl p-3 text-center mb-4">
+          <p className="text-xs text-slate-400 mb-1">الكمية الحالية</p>
+          <p className="text-xl font-bold text-slate-700">{inv.quantity}</p>
+        </div>
+
+        <label className="text-sm font-medium text-slate-700 block mb-1.5">
+          التعديل (موجب للزيادة، سالب للنقص)
+        </label>
+        <input
+          type="number"
+          value={delta}
+          onChange={(e) => setDelta(e.target.value)}
+          autoFocus
+          className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-xl font-bold text-center mb-2"
+          placeholder="مثال: 5 أو -3"
+        />
+        {delta && (
+          <p className={cn('text-center text-sm font-medium mb-3', newQty < 0 ? 'text-red-500' : 'text-slate-500')}>
+            الكمية الجديدة: <span className="font-bold">{newQty}</span>
+          </p>
+        )}
+
+        <label className="text-sm font-medium text-slate-700 block mb-1.5">سبب التسوية</label>
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={2}
+          className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none mb-3"
+          placeholder="اختياري"
+        />
+
+        {error && (
+          <div className="flex items-center gap-2 bg-red-50 text-red-600 text-sm rounded-xl px-4 py-3 mb-3">
+            <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <button onClick={onClose} disabled={loading} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm">إلغاء</button>
+          <button onClick={handleSubmit} disabled={loading}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <SlidersHorizontal className="w-4 h-4" />}
+            تنفيذ التسوية
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Physical Count Modal ───────────────────────────────────────────────────
+function PhysicalCountModal({ open, items, branchId, onClose, onSuccess }: any) {
+  const [actuals, setActuals] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!open) return null;
+
+  const setActual = (productId: string, value: string) => {
+    setActuals((prev) => ({ ...prev, [productId]: value }));
+  };
+
+  const countedItems = Object.entries(actuals)
+    .filter(([, v]) => v !== '' && v !== undefined)
+    .map(([productId, v]) => ({ productId, actualQty: parseInt(v) || 0 }));
+
+  const handleSubmit = async () => {
+    if (!branchId) { setError('لا يوجد فرع محدد لتنفيذ الجرد'); return; }
+    if (countedItems.length === 0) { setError('يرجى إدخال الكمية الفعلية لصنف واحد على الأقل'); return; }
+    setLoading(true); setError('');
+    try {
+      await inventoryApi.count({ branchId, items: countedItems });
+      onSuccess();
+    } catch (e: any) {
+      setError(e.message || 'فشل تنفيذ الجرد');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b sticky top-0 bg-white">
+          <h3 className="text-lg font-bold text-slate-800">جرد فعلي للمخزون</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          <p className="text-sm text-slate-500">أدخل الكمية الفعلية المعدودة لكل صنف. اترك الحقل فارغاً لتجاهل الصنف.</p>
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="text-right px-4 py-2 text-slate-500 font-medium">المنتج</th>
+                  <th className="text-center px-4 py-2 text-slate-500 font-medium">الكمية بالنظام</th>
+                  <th className="text-center px-4 py-2 text-slate-500 font-medium">الكمية الفعلية</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {(items || []).map((inv: any) => (
+                  <tr key={inv.id}>
+                    <td className="px-4 py-2 font-medium text-slate-800">{inv.product.name}</td>
+                    <td className="px-4 py-2 text-center text-slate-500">{inv.quantity}</td>
+                    <td className="px-4 py-2 text-center">
+                      <input
+                        type="number"
+                        min={0}
+                        value={actuals[inv.product.id] ?? ''}
+                        onChange={(e) => setActual(inv.product.id, e.target.value)}
+                        className="w-24 text-center border border-slate-200 rounded-lg py-1 text-sm"
+                        placeholder={String(inv.quantity)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 bg-red-50 text-red-600 text-sm rounded-xl px-4 py-3">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 p-6 pt-0">
+          <button onClick={onClose} disabled={loading} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50">إلغاء</button>
+          <button onClick={handleSubmit} disabled={loading}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl font-semibold flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
+            حفظ الجرد
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function InventoryPage() {
   const { user } = useAuthStore();
+  const qc = useQueryClient();
   const [tab, setTab] = useState<'stock' | 'movements'>('stock');
   const [search, setSearch] = useState('');
+  const [adjustInv, setAdjustInv] = useState<any>(null);
+  const [showCount, setShowCount] = useState(false);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const branchId = user?.role !== 'ADMIN' ? user?.branchId : undefined;
+
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const refreshInventory = () => {
+    qc.invalidateQueries({ queryKey: ['inventory-stock'] });
+    qc.invalidateQueries({ queryKey: ['inventory-movements'] });
+  };
+
+  const handleAdjustSuccess = () => {
+    setAdjustInv(null);
+    refreshInventory();
+    showToast('success', 'تم تنفيذ التسوية بنجاح');
+  };
+
+  const handleCountSuccess = () => {
+    setShowCount(false);
+    refreshInventory();
+    showToast('success', 'تم حفظ الجرد وتحديث المخزون بنجاح');
+  };
 
   const { data: stock, isLoading } = useQuery({
     queryKey: ['inventory-stock', branchId],
@@ -54,6 +261,16 @@ export default function InventoryPage() {
   return (
     <AppLayout title="إدارة المخزون">
       <div className="space-y-5" dir="rtl">
+        <div className="flex items-center justify-between">
+          <div />
+          <button
+            onClick={() => setShowCount(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition text-sm"
+          >
+            <ClipboardCheck className="w-4 h-4" /> جرد فعلي
+          </button>
+        </div>
+
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-4">
           {[
@@ -114,6 +331,7 @@ export default function InventoryPage() {
                   <th className="text-center px-4 py-3">الكمية</th>
                   <th className="text-center px-4 py-3">الحد الأدنى</th>
                   <th className="text-center px-4 py-3">الحالة</th>
+                  <th className="text-center px-4 py-3">إجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -165,6 +383,15 @@ export default function InventoryPage() {
                           )}>
                             {isOut ? 'نفد' : isLow ? 'منخفض' : 'متوفر'}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() => setAdjustInv(inv)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition"
+                            title="تسوية يدوية"
+                          >
+                            <SlidersHorizontal className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     );
@@ -230,6 +457,31 @@ export default function InventoryPage() {
           </div>
         )}
       </div>
+
+      <AdjustmentModal
+        key={adjustInv?.id ?? 'no-adjust'}
+        open={!!adjustInv}
+        inv={adjustInv}
+        onClose={() => setAdjustInv(null)}
+        onSuccess={handleAdjustSuccess}
+      />
+      <PhysicalCountModal
+        open={showCount}
+        items={filtered}
+        branchId={branchId || filtered[0]?.branch?.id}
+        onClose={() => setShowCount(false)}
+        onSuccess={handleCountSuccess}
+      />
+
+      {toast && (
+        <div className={cn(
+          'fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-5 py-3 rounded-xl shadow-lg text-sm font-medium',
+          toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white',
+        )}>
+          {toast.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+          {toast.message}
+        </div>
+      )}
     </AppLayout>
   );
 }

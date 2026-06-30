@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usersApi } from '@/lib/api';
 import { useAuthStore } from '@/store/auth.store';
 import { ROLE_LABELS, formatDate } from '@/lib/utils';
-import { Plus, Edit2, UserX, Key, X, Check, Loader2, AlertCircle, Users, Shield } from 'lucide-react';
+import { Plus, Edit2, UserX, Key, X, Check, Loader2, AlertCircle, Users, Shield, Building2 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { cn } from '@/lib/utils';
 
@@ -15,6 +15,93 @@ const ROLE_COLORS: Record<string, string> = {
   CASHIER: 'bg-blue-100 text-blue-700',
   WAREHOUSE: 'bg-amber-100 text-amber-700',
 };
+
+// Branch CRUD: only list + create are supported by the backend
+// (no PUT/:id or activate/deactivate endpoint exists), so only those
+// two actions are implemented here.
+function BranchModal({ open, onClose, onSave }: any) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [nameAr, setNameAr] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const [isWarehouse, setIsWarehouse] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = async () => {
+    if (!code || !name) { setError('الكود والاسم مطلوبان'); return; }
+    setLoading(true); setError('');
+    try {
+      await onSave({
+        code, name,
+        nameAr: nameAr || undefined,
+        address: address || undefined,
+        phone: phone || undefined,
+        isWarehouse,
+      });
+      setCode(''); setName(''); setNameAr(''); setAddress(''); setPhone(''); setIsWarehouse(false);
+    } catch (e: any) { setError(e.message); }
+    finally { setLoading(false); }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-bold text-slate-800">فرع جديد</h3>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1">كود الفرع *</label>
+              <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} autoFocus
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="BR-002" />
+            </div>
+            <div>
+              <label className="text-sm font-medium text-slate-700 block mb-1">الهاتف</label>
+              <input value={phone} onChange={(e) => setPhone(e.target.value)}
+                className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">الاسم بالإنجليزية *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">الاسم بالعربية</label>
+            <input value={nameAr} onChange={(e) => setNameAr(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-slate-700 block mb-1">العنوان</label>
+            <input value={address} onChange={(e) => setAddress(e.target.value)}
+              className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={isWarehouse} onChange={(e) => setIsWarehouse(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300" />
+            هذا الفرع مستودع
+          </label>
+          {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-xl">{error}</p>}
+        </div>
+        <div className="flex gap-3 mt-5">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-slate-200 rounded-xl text-slate-600 text-sm">إلغاء</button>
+          <button onClick={handleSave} disabled={loading}
+            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            حفظ
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function UserFormModal({ open, user, branches, onClose, onSave }: any) {
   const isEdit = !!user;
@@ -127,10 +214,12 @@ function UserFormModal({ open, user, branches, onClose, onSave }: any) {
 export default function UsersPage() {
   const qc = useQueryClient();
   const { user: currentUser } = useAuthStore();
+  const [tab, setTab] = useState<'users' | 'branches'>('users');
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [editUser, setEditUser] = useState<any>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showBranchCreate, setShowBranchCreate] = useState(false);
   const [resetUserId, setResetUserId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
@@ -175,24 +264,57 @@ export default function UsersPage() {
     qc.invalidateQueries({ queryKey: ['users'] });
   };
 
+  const handleCreateBranch = async (form: any) => {
+    await usersApi.createBranch(form);
+    qc.invalidateQueries({ queryKey: ['branches'] });
+    setShowBranchCreate(false);
+  };
+
   return (
     <AppLayout title="إدارة المستخدمين">
       <div className="space-y-5" dir="rtl">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-slate-800">المستخدمون</h1>
-            <p className="text-slate-500 text-sm">{data?.total ?? 0} مستخدم</p>
+            <h1 className="text-xl font-bold text-slate-800">{tab === 'users' ? 'المستخدمون' : 'الفروع'}</h1>
+            <p className="text-slate-500 text-sm">
+              {tab === 'users' ? `${data?.total ?? 0} مستخدم` : `${branchesData?.length ?? 0} فرع`}
+            </p>
           </div>
-          <button onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition text-sm">
-            <Plus className="w-4 h-4" /> مستخدم جديد
-          </button>
+          {tab === 'users' ? (
+            <button onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition text-sm">
+              <Plus className="w-4 h-4" /> مستخدم جديد
+            </button>
+          ) : (
+            <button onClick={() => setShowBranchCreate(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition text-sm">
+              <Plus className="w-4 h-4" /> فرع جديد
+            </button>
+          )}
         </div>
 
+        <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+          {([['users', 'المستخدمون', Users], ['branches', 'الفروع', Building2]] as const).map(([t, l, Icon]) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition',
+                tab === t ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500',
+              )}
+            >
+              <Icon className="w-4 h-4" />{l}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'users' && (
         <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
           className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
           placeholder="بحث بالاسم أو اسم المستخدم..." />
+        )}
 
+        {tab === 'users' && (
         <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -257,10 +379,54 @@ export default function UsersPage() {
             </tbody>
           </table>
         </div>
+        )}
+
+        {tab === 'branches' && (
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 text-xs font-medium border-b border-slate-100">
+                <th className="text-right px-4 py-3">الكود</th>
+                <th className="text-right px-4 py-3">الاسم</th>
+                <th className="text-right px-4 py-3">الاسم بالعربية</th>
+                <th className="text-center px-4 py-3">النوع</th>
+                <th className="text-center px-4 py-3">الحالة</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {(branchesData || []).map((b: any) => (
+                <tr key={b.id} className="hover:bg-slate-50 transition">
+                  <td className="px-4 py-3">
+                    <span className="font-mono text-xs bg-slate-100 px-2 py-1 rounded-lg">{b.code}</span>
+                  </td>
+                  <td className="px-4 py-3 font-medium text-slate-800">{b.name}</td>
+                  <td className="px-4 py-3 text-slate-500 text-xs">{b.name_ar || '—'}</td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium',
+                      b.is_warehouse ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700')}>
+                      {b.is_warehouse ? 'مستودع' : 'فرع بيع'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium',
+                      b.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500')}>
+                      {b.is_active ? 'نشط' : 'غير نشط'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {(!branchesData || branchesData.length === 0) && (
+                <tr><td colSpan={5} className="text-center py-10 text-slate-400">لا توجد فروع</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        )}
       </div>
 
       <UserFormModal open={showCreate} branches={branchesData} onClose={() => setShowCreate(false)} onSave={handleCreate} />
       <UserFormModal open={!!editUser} user={editUser} branches={branchesData} onClose={() => setEditUser(null)} onSave={handleUpdate} />
+      <BranchModal open={showBranchCreate} onClose={() => setShowBranchCreate(false)} onSave={handleCreateBranch} />
 
       {/* Reset Password Modal */}
       {resetUserId && (
